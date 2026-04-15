@@ -11,7 +11,10 @@ var world_scene = preload("res://world.tscn")
 
 func _ready() -> void:
 	add_to_group("main")
-	_show_scene(title_screen_scene)
+	if "--auto-skip" in OS.get_cmdline_user_args():
+		get_tree().create_timer(0.5).timeout.connect(_auto_enter_world)
+	else:
+		_show_scene(login_screen_scene)
 
 
 func _show_scene(packed_scene: PackedScene):
@@ -26,13 +29,8 @@ func _show_scene(packed_scene: PackedScene):
 		current_scene.character_created.connect(_on_character_created)
 
 
-func _unhandled_input(event):
-	if current_scene and current_scene.is_in_group("title_screen"):
-		return
-	# Title screen: any key → login
-	if current_scene and current_scene.name == "TitleScreen":
-		if event is InputEventKey and event.pressed:
-			_show_scene(login_screen_scene)
+func _unhandled_input(_event):
+	pass
 
 
 func _on_login_completed():
@@ -58,6 +56,14 @@ func _on_character_created(player_name: String, character_name: String):
 	NetworkManager.players[my_id] = NetworkManager.my_info.duplicate()
 	NetworkManager._register_player.rpc(NetworkManager.my_info)
 
+	enter_world()
+
+
+func _auto_enter_world():
+	# Setup network for single-player testing
+	NetworkManager.my_info.name = "TestPlayer"
+	NetworkManager.my_info.character = "Knight"
+	NetworkManager.host_game()
 	enter_world()
 
 

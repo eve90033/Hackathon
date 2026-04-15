@@ -1,15 +1,36 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="Script" path="res://system/character/monster_character.gd" id="1_mc"]
 [ext_resource type="Script" path="res://system/character/sprite_monster.gd" id="2_sm"]
 [ext_resource type="Texture2D" uid="uid://btryd5g3oajow" path="res://content/character/Shadow.png" id="3_shadow"]
-[ext_resource type="Script" path="res://system/damage/resource_damage_team.gd" id="4_team"]
+[ext_resource type="Script" path="res://system/damage/hitbox.gd" id="4_hitbox"]
+[ext_resource type="Script" path="res://system/damage/damage_area.gd" id="5_dmg"]
+[ext_resource type="Resource" uid="uid://b1hex3hlai17n" path="res://content/team/enemy_team.tres" id="6_enemy"]
+[ext_resource type="Script" path="res://system/damage/resource_damage.gd" id="7_resdmg"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_body"]
+radius = 6.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_hitbox"]
+radius = 8.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_contact"]
+radius = 10.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_detect"]
+radius = 100.0
+
+[sub_resource type="Resource" id="Resource_dmg"]
+script = ExtResource("7_resdmg")
+amount = 1
+push_force = 24
 
 [node name="MonsterCharacter" type="CharacterBody2D"]
 collision_layer = 2
 collision_mask = 3
 motion_mode = 1
 script = ExtResource("1_mc")
+team = ExtResource("6_enemy")
 
 [node name="Shadow" type="Sprite2D" parent="."]
 texture = ExtResource("3_shadow")
@@ -21,3 +42,32 @@ vframes = 4
 script = ExtResource("2_sm")
 
 [node name="CollisionShape" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_body")
+
+[node name="Hitbox" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 0
+monitoring = false
+script = ExtResource("4_hitbox")
+team = ExtResource("6_enemy")
+
+[node name="HitboxShape" type="CollisionShape2D" parent="Hitbox"]
+shape = SubResource("CircleShape2D_hitbox")
+
+[node name="DamageArea" type="Area2D" parent="."]
+collision_layer = 0
+monitorable = false
+script = ExtResource("5_dmg")
+damage = SubResource("Resource_dmg")
+team = ExtResource("6_enemy")
+
+[node name="DamageShape" type="CollisionShape2D" parent="DamageArea"]
+shape = SubResource("CircleShape2D_contact")
+
+[node name="DetectionArea" type="Area2D" parent="."]
+collision_layer = 0
+collision_mask = 16
+monitorable = false
+
+[node name="DetectionShape" type="CollisionShape2D" parent="DetectionArea"]
+shape = SubResource("CircleShape2D_detect")

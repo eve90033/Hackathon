@@ -12,4 +12,5 @@ var resource_life:ResourceLife:
 
 
 func on_life_changed():
+	receptacle_bar.max_life = resource_life.max_life
 	receptacle_bar.life = resource_life.life

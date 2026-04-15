@@ -50,7 +50,7 @@ custom_minimum_size = Vector2(0, 20)
 [node name="GoogleButton" type="Button" parent="VBox"]
 layout_mode = 2
 custom_minimum_size = Vector2(0, 50)
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 22
 text = "Sign in with Google"
 
 [node name="StatusLabel" type="Label" parent="VBox"]
