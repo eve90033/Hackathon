@@ -59,12 +59,22 @@ var sfx_capture_fail:AudioStreamPlayer
 var capture_cooldown := 0.0
 
 
+func _is_server() -> bool:
+	return multiplayer.has_multiplayer_peer() and multiplayer.is_server()
+
+func _is_multiplayer() -> bool:
+	return multiplayer.has_multiplayer_peer()
+
 func _ready():
 	if Engine.is_editor_hint():
 		return
 	hp = max_hp
 	home_position = global_position
 	add_to_group("monster")
+
+	# Server is authority for all monsters
+	if _is_multiplayer():
+		set_multiplayer_authority(1)
 
 	# Only collide with walls, not players
 	set_collision_mask_value(2, false)
@@ -98,16 +108,28 @@ func _ready():
 	if damage_area:
 		damage_area.monitoring = false
 
-	# Detection area setup
+	# Detection area setup — server only
 	if detection_area:
-		detection_area.body_entered.connect(_on_detection_entered)
-		detection_area.body_exited.connect(_on_detection_exited)
+		if !_is_multiplayer() or _is_server():
+			detection_area.body_entered.connect(_on_detection_entered)
+			detection_area.body_exited.connect(_on_detection_exited)
+		else:
+			# Client: disable detection area
+			detection_area.monitoring = false
 
+
+var _prev_ai_state := AIState.IDLE
 
 func _physics_process(delta:float):
 	if Engine.is_editor_hint():
 		return
 
+	# Client-only: render synced state
+	if _is_multiplayer() and !_is_server():
+		_process_client(delta)
+		return
+
+	# Server / single-player: full AI
 	# Capture cooldown
 	if capture_cooldown > 0:
 		capture_cooldown -= delta
@@ -136,6 +158,69 @@ func _physics_process(delta:float):
 		AIState.DEAD:
 			velocity = Vector2.ZERO
 
+	move_and_slide()
+
+
+var _client_attack_timer := 0.0
+
+func _process_client(delta:float):
+	# Capture cooldown (must tick on client too)
+	if capture_cooldown > 0:
+		capture_cooldown -= delta
+
+	# Flash fade (local visual effect)
+	if flash_timer > 0:
+		flash_timer -= delta
+		if flash_timer <= 0:
+			sprite.modulate = Color.WHITE
+
+	# Animate based on synced ai_state
+	match ai_state:
+		AIState.IDLE, AIState.STUN:
+			sprite.anim = 0  # IDLE
+			if damage_area:
+				damage_area.monitoring = false
+		AIState.CHASE:
+			sprite.anim = 1  # MOVING
+			if move_vector.length():
+				sprite.direction = move_vector.normalized()
+		AIState.ATTACK:
+			if _prev_ai_state != AIState.ATTACK:
+				# Attack just started
+				sprite.scale = Vector2(1.1, 1.1)
+				sprite.modulate = Color(1.3, 0.6, 0.6)
+				_client_attack_timer = 0.0
+				NetworkManager.flog("[Monster] %s ATTACK started on client" % name)
+			_client_attack_timer += delta
+			# Lunge phase: activate DamageArea for local hit detection
+			if _client_attack_timer >= 0.3 and _client_attack_timer < 0.45:
+				if damage_area and !damage_area.monitoring:
+					damage_area.monitoring = true
+					NetworkManager.flog("[Monster] %s DamageArea ON, overlaps=%d" % [name, damage_area.get_overlapping_areas().size()])
+			elif _client_attack_timer >= 0.45:
+				if damage_area and damage_area.monitoring:
+					damage_area.monitoring = false
+					NetworkManager.flog("[Monster] %s DamageArea OFF" % name)
+		AIState.HIT:
+			sprite.anim = 0
+			if damage_area:
+				damage_area.monitoring = false
+		AIState.DEAD:
+			if damage_area:
+				damage_area.monitoring = false
+
+	# Reset attack visual when leaving attack state
+	if ai_state != AIState.ATTACK and _prev_ai_state == AIState.ATTACK:
+		sprite.scale = Vector2(1.0, 1.0)
+		if damage_area:
+			damage_area.monitoring = false
+		if ai_state != AIState.HIT and ai_state != AIState.DEAD:
+			sprite.modulate = Color.WHITE
+
+	_prev_ai_state = ai_state
+
+	# Interpolate position (synced via MultiplayerSynchronizer)
+	velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
 	move_and_slide()
 
 
@@ -205,7 +290,7 @@ func _process_attack(delta:float):
 				var lunge_dir = global_position.direction_to(target.global_position)
 				velocity = lunge_dir * speed * 3.0
 	elif attack_phase == 1:
-		# Lunge active (0.15s)
+		# Lunge over (0.15s)
 		if stun_timer >= 0.45:
 			# Done, retreat back
 			if damage_area:
@@ -252,7 +337,42 @@ func _on_damage_received(damage:ResourceDamage, at_pos:Vector2):
 	if ai_state == AIState.DEAD:
 		return
 
-	hp -= damage.amount
+	if _is_multiplayer() and !_is_server():
+		# Client: tell server "I hit this monster" (server calculates damage)
+		_rpc_monster_hit.rpc_id(1, at_pos)
+		return
+
+	_apply_damage(damage.amount, at_pos)
+
+
+@rpc("any_peer", "reliable")
+func _rpc_monster_hit(at_pos: Vector2):
+	if !multiplayer.is_server():
+		return
+	if ai_state == AIState.DEAD:
+		return
+	# Server: look up attacker's damage from their character
+	var sender_id = multiplayer.get_remote_sender_id()
+	var world_node = get_parent()
+	var attacker = world_node.get_node_or_null("PlayerContainer/Player_%d" % sender_id)
+	var dmg = 2  # default
+	if attacker and attacker is NetworkCharacter:
+		dmg = attacker.attack_damage
+	_apply_damage(dmg, at_pos)
+	# Play hit SFX on all clients
+	_rpc_hit_fx.rpc()
+
+
+@rpc("authority", "reliable")
+func _rpc_hit_fx():
+	if sfx_hit:
+		sfx_hit.play()
+	sprite.modulate = Color(5, 5, 5)
+	flash_timer = 0.1
+
+
+func _apply_damage(amount: int, at_pos: Vector2):
+	hp -= amount
 
 	# Hitstun + knockback
 	ai_state = AIState.HIT
@@ -287,20 +407,32 @@ func _die():
 	if sfx_die:
 		sfx_die.play()
 	monster_died.emit(self)
-	# Give XP + drop HP
+	# Give XP + drop HP (server only)
 	_give_xp()
 	_drop_hp()
+	# Broadcast death SFX to clients
+	if _is_multiplayer():
+		_rpc_die_fx.rpc()
 	# Respawn timer
 	var tween = create_tween()
 	tween.tween_property(sprite, "modulate:a", 0.0, 0.3)
 	tween.tween_callback(_hide_and_respawn)
 
 
+@rpc("authority", "reliable")
+func _rpc_die_fx():
+	if sfx_die:
+		sfx_die.play()
+	sprite.modulate = Color(5, 5, 5)
+	var tween = create_tween()
+	tween.tween_property(sprite, "modulate:a", 0.0, 0.3)
+
+
 func _drop_hp():
 	var pickup = HP_PICKUP_SCENE.instantiate()
 	pickup.heal_amount = hp_drop_value
 	pickup.global_position = global_position
-	get_tree().current_scene.add_child(pickup)
+	get_parent().add_child(pickup)
 
 
 func _give_xp():
@@ -313,8 +445,24 @@ func _give_xp():
 		if d < nearest_dist:
 			nearest_dist = d
 			nearest = p
-	if nearest and nearest.has_method("add_xp"):
-		nearest.add_xp(xp_value)
+	if nearest and nearest is NetworkCharacter:
+		if _is_multiplayer():
+			# Send XP to the player's client via RPC
+			_rpc_give_xp.rpc_id(nearest.peer_id, xp_value)
+		else:
+			nearest.add_xp(xp_value)
+
+
+@rpc("authority", "reliable")
+func _rpc_give_xp(amount: int):
+	# Runs on the client — find local player and add XP
+	var my_id = multiplayer.get_unique_id()
+	var world = get_parent()
+	if !world:
+		return
+	var player = world.get_node_or_null("PlayerContainer/Player_%d" % my_id)
+	if player and player.has_method("add_xp"):
+		player.add_xp(amount)
 
 
 func _hide_and_respawn():
@@ -376,38 +524,77 @@ func attempt_capture(captor:Node2D):
 		return
 	capture_cooldown = 1.0  # 1s cooldown between attempts
 
+	if _is_multiplayer() and !_is_server():
+		# Client: forward to server
+		_rpc_attempt_capture.rpc_id(1, captor.name)
+		return
+
+	# Server / single-player: process capture
+	_do_capture(captor)
+
+
+@rpc("any_peer", "reliable")
+func _rpc_attempt_capture(captor_name: String):
+	if !multiplayer.is_server():
+		return
+	# Find captor in PlayerContainer (monster's sibling under World)
+	var world_node = get_parent()
+	if !world_node:
+		return
+	var captor = world_node.get_node_or_null("PlayerContainer/" + captor_name)
+	if !captor:
+		return
+	_do_capture(captor)
+
+
+func _do_capture(captor: Node2D):
+	if ai_state == AIState.DEAD:
+		return
+	# Get the peer_id of the captor for targeted RPC
+	var captor_peer := 0
+	if captor is NetworkCharacter:
+		captor_peer = captor.peer_id
 	# Fail rate = current HP / max HP (lower HP = easier to capture)
 	var fail_rate = float(hp) / float(max_hp)
 	if randf() >= fail_rate:
-		# Success
 		_capture_success(captor)
+		if _is_multiplayer() and captor_peer > 0:
+			_rpc_capture_success_fx.rpc_id(captor_peer)
 	else:
-		# Fail
 		_capture_fail()
+		if _is_multiplayer() and captor_peer > 0:
+			_rpc_capture_fail_fx.rpc_id(captor_peer)
+
+
+@rpc("authority", "reliable")
+func _rpc_capture_fail_fx():
+	if sfx_capture_fail:
+		sfx_capture_fail.play()
+	sprite.modulate = Color(5, 5, 5)
+	flash_timer = 0.15
+	_show_floating_text("收服失敗...", Color(1.0, 0.4, 0.3))
 
 
 func _capture_success(captor:Node2D):
 	ai_state = AIState.DEAD
 	if damage_area:
 		damage_area.monitoring = false
+	# Reset attack visuals before capture animation
+	sprite.scale = Vector2(1.0, 1.0)
+	sprite.modulate = Color.WHITE
 	if sfx_capture_ok:
 		sfx_capture_ok.play()
-
-	# Floating text
 	_show_floating_text("收服成功！", Color(0.2, 1.0, 0.3))
 
-	# Shrink + fade animation
+	# Shrink + fade animation (server side)
 	var tween = create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
 	tween.tween_property(sprite, "modulate:a", 0.0, 0.4)
 	tween.set_parallel(false)
 	tween.tween_callback(func():
-		# Give XP
 		_give_xp()
-		# Spawn companion
 		_spawn_companion(captor)
-		# Disable collision
 		set_deferred("collision_layer", 0)
 		set_deferred("collision_mask", 0)
 		if hitbox:
@@ -415,6 +602,20 @@ func _capture_success(captor:Node2D):
 		visible = false
 		monster_captured.emit(self, captor)
 	)
+
+
+@rpc("authority", "reliable")
+func _rpc_capture_success_fx():
+	# Reset attack visuals
+	sprite.scale = Vector2(1.0, 1.0)
+	sprite.modulate = Color.WHITE
+	if sfx_capture_ok:
+		sfx_capture_ok.play()
+	_show_floating_text("收服成功！", Color(0.2, 1.0, 0.3))
+	var tw = create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tw.tween_property(sprite, "modulate:a", 0.0, 0.4)
 
 
 func _capture_fail():
@@ -436,7 +637,7 @@ func _spawn_companion(captor:Node2D):
 	comp.global_position = global_position
 	comp.target = captor
 	comp.monster_key = monster_key
-	get_tree().current_scene.add_child(comp)
+	get_parent().add_child(comp)
 	if sprite and sprite.texture:
 		comp.sprite.texture = sprite.texture
 	# Notify other players via NetworkManager (reliable global node)

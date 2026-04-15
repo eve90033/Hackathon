@@ -27,6 +27,15 @@ func _ready():
 	_build_grid()
 	_update_selection()
 	confirm_button.pressed.connect(_on_confirm)
+	# Auto-select for testing
+	if "--auto-login" in OS.get_cmdline_user_args():
+		get_tree().create_timer(0.5).timeout.connect(func():
+			# Pick a random character and auto-confirm
+			selected_index = randi() % character_list.size()
+			_update_selection()
+			name_edit.text = "Player_%d" % OS.get_process_id()
+			_on_confirm()
+		)
 
 
 func _scan_characters():

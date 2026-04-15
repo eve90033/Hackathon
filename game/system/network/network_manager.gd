@@ -23,6 +23,20 @@ var player_database := {}
 const DB_PATH := "user://player_database.json"
 
 
+var _log_file: FileAccess
+
+func flog(msg: String):
+	print(msg)
+	if !_log_file:
+		var pid = OS.get_process_id()
+		var path = "user://debug_log_%d.txt" % pid
+		_log_file = FileAccess.open(path, FileAccess.WRITE)
+		if _log_file:
+			_log_file.store_line("=== Log started PID=%d ===" % pid)
+	if _log_file:
+		_log_file.store_line("[%d] %s" % [Time.get_ticks_msec(), msg])
+		_log_file.flush()
+
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -87,7 +101,7 @@ func join_game(address: String):
 
 
 func _on_peer_connected(id: int):
-	print("[Net] Peer connected: %d" % id)
+	flog("[Net] Peer connected: %d, my_info=%s" % [id, str(my_info)])
 	_register_player.rpc_id(id, my_info)
 
 
@@ -98,8 +112,8 @@ func _on_peer_disconnected(id: int):
 
 
 func _on_connected_to_server():
-	print("[Net] Connected to server!")
 	var my_id = multiplayer.get_unique_id()
+	flog("[Net] Connected to server! my_id=%d my_info=%s" % [my_id, str(my_info)])
 	players[my_id] = my_info.duplicate()
 	connection_succeeded.emit()
 
@@ -121,7 +135,7 @@ func _on_server_disconnected():
 func _register_player(info: Dictionary):
 	var sender_id = multiplayer.get_remote_sender_id()
 	players[sender_id] = info
-	print("[Net] Registered player %d: %s" % [sender_id, info.get("name", "?")])
+	flog("[Net] _register_player sender=%d info=%s | all_players=%s" % [sender_id, str(info), str(players.keys())])
 	player_connected.emit(sender_id)
 
 
@@ -133,14 +147,14 @@ func request_login(user_id: String):
 	if !multiplayer.is_server():
 		return
 	var sender_id = multiplayer.get_remote_sender_id()
-	print("[Net] Login request from peer %d, user_id=%s" % [sender_id, user_id])
+	flog("[Net] Login request from peer %d, user_id=%s" % [sender_id, user_id])
 	var data = player_database.get(user_id, {})
 	_login_response.rpc_id(sender_id, user_id, data)
 
 
 @rpc("authority", "reliable")
 func _login_response(user_id: String, data: Dictionary):
-	print("[Net] Login response: user_id=%s has_data=%s" % [user_id, !data.is_empty()])
+	flog("[Net] Login response: user_id=%s has_data=%s data=%s" % [user_id, !data.is_empty(), str(data)])
 	login_response.emit(user_id, data)
 
 
@@ -182,9 +196,13 @@ func disconnect_from_game():
 
 @rpc("any_peer", "call_remote", "reliable")
 func sync_companion(captor_name:String, m_key:String):
-	var world = get_tree().current_scene
-	if !world:
+	# Find World node (child of Main)
+	var main = get_tree().current_scene
+	if !main:
 		return
+	var world = main.get_node_or_null("World")
+	if !world:
+		world = main  # fallback for single-player
 	var captor = world.get_node_or_null("PlayerContainer/" + captor_name)
 	if !captor:
 		return
