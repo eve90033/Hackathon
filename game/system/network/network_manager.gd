@@ -172,6 +172,36 @@ func disconnect_from_game():
 	players.clear()
 
 
+@rpc("any_peer", "call_remote", "reliable")
+func sync_companion(captor_name:String, m_key:String):
+	var world = get_tree().current_scene
+	if !world:
+		return
+	var captor = world.get_node_or_null("PlayerContainer/" + captor_name)
+	if !captor:
+		return
+	# Remove old companion
+	for old in get_tree().get_nodes_in_group("companion"):
+		if old.target == captor:
+			old.queue_free()
+	# Spawn new
+	var comp_scene = preload("res://system/companion/companion.tscn")
+	var comp = comp_scene.instantiate()
+	comp.global_position = captor.global_position + Vector2(16, 16)
+	comp.target = captor
+	comp.monster_key = m_key
+	world.add_child(comp)
+	# Load texture
+	var clean_key = m_key.rstrip("0123456789")
+	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % clean_key
+	if !ResourceLoader.exists(tex_path):
+		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key]
+	if !ResourceLoader.exists(tex_path):
+		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key.to_lower()]
+	if ResourceLoader.exists(tex_path):
+		comp.sprite.texture = load(tex_path)
+
+
 func _load_database():
 	if !FileAccess.file_exists(DB_PATH):
 		return

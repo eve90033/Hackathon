@@ -60,8 +60,9 @@ func _on_login_response(user_id: String, data: Dictionary):
 
 
 func _generate_user_id() -> String:
-	# Simulate: use a hash of OS unique ID
+	# Use OS unique ID + process ID for same-machine multiplayer
 	var raw = OS.get_unique_id()
 	if raw.is_empty():
 		raw = "local_%d" % randi()
+	raw += "_%d" % OS.get_process_id()
 	return raw.md5_text().substr(0, 12)

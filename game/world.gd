@@ -61,7 +61,7 @@ func _ready():
 	# Spawn monsters
 	_spawn_monsters()
 
-	# Multiplayer: connect signals and spawn local player
+	# Multiplayer: connect signals
 	if multiplayer.has_multiplayer_peer():
 		NetworkManager.player_connected.connect(_on_player_connected)
 		NetworkManager.player_disconnected.connect(_on_player_disconnected)
@@ -70,12 +70,25 @@ func _ready():
 		var my_id = multiplayer.get_unique_id()
 		NetworkManager.players[my_id] = NetworkManager.my_info.duplicate()
 
-		_spawn_player(my_id)
+		# Watch for our character being spawned
+		player_container.child_entered_tree.connect(_on_player_node_added)
+
+		# Setup MultiplayerSpawner for player replication
+		var spawner = MultiplayerSpawner.new()
+		spawner.name = "PlayerSpawner"
+		spawner.spawn_path = player_container.get_path()
+		spawner.spawn_function = _spawn_player_for_spawner
+		player_container.add_child(spawner)
 
 		if multiplayer.is_server():
+			# Host: spawn self + any already connected peers
+			_server_spawn_player(my_id)
 			for pid in NetworkManager.players:
-				if pid != 1:
-					_spawn_player(pid)
+				if pid != my_id:
+					_server_spawn_player(pid)
+		else:
+			# Client: request server to spawn us
+			_request_spawn.rpc_id(1)
 	else:
 		_spawn_single_player()
 
@@ -96,33 +109,56 @@ func _spawn_single_player():
 		player_ui.resource_life = character.resource_life
 
 
-func _spawn_player(peer_id: int):
-	# Don't duplicate
+func _on_player_node_added(node:Node):
+	if node is NetworkCharacter and node.peer_id == multiplayer.get_unique_id():
+		# This is our character
+		call_deferred("_setup_local_player", node)
+
+
+func _setup_local_player(character):
+	camera_grid.target = character
+	local_player = character
+	if character.resource_life:
+		player_ui.resource_life = character.resource_life
+	_load_player_data(character)
+
+
+@rpc("any_peer", "reliable")
+func _request_spawn():
+	if !multiplayer.is_server():
+		return
+	var sender = multiplayer.get_remote_sender_id()
+	_server_spawn_player(sender)
+
+
+func _server_spawn_player(peer_id:int):
+	# Only server spawns — MultiplayerSpawner replicates to clients
+	if !multiplayer.is_server():
+		return
 	if player_container.has_node("Player_%d" % peer_id):
 		return
+	var spawner = player_container.get_node_or_null("PlayerSpawner")
+	if spawner:
+		spawner.spawn(peer_id)
 
+
+func _spawn_player_for_spawner(data) -> Node:
+	var peer_id = data as int
 	var info = NetworkManager.players.get(peer_id, NetworkManager.my_info)
 	var character = network_character_scene.instantiate()
 	character.peer_id = peer_id
 	character.player_name = info.get("name", "Player")
 	character.character_key = info.get("character", "Knight")
 	character.name = "Player_%d" % peer_id
-	character.position = Vector2(56, 53)  # Spawn point
-	player_container.add_child(character)
-
-	# If this is our character, attach camera + UI
-	if peer_id == multiplayer.get_unique_id():
-		camera_grid.target = character
-		local_player = character
-		# Wire HP UI + load saved data
-		if character.resource_life:
-			player_ui.resource_life = character.resource_life
-		_load_player_data(character)
+	character.position = Vector2(56, 53)
+	return character
 
 
 func _on_player_connected(peer_id: int):
-	print("[World] Spawning player %d" % peer_id)
-	_spawn_player(peer_id)
+	var info = NetworkManager.players.get(peer_id, {})
+	print("[World] Player connected: peer=%d name=%s char=%s" % [peer_id, info.get("name","?"), info.get("character","?")])
+	if multiplayer.is_server():
+		_server_spawn_player(peer_id)
 
 
 func _on_player_disconnected(peer_id: int):
@@ -306,7 +342,7 @@ func _process(_delta):
 			xp_bar.size.x = bar_w
 			xp_label.text = "MAX"
 
-	# Auto-save check
+	# Auto-save check + sync peers
 	save_timer += _delta
 	if save_timer >= 2.0:
 		save_timer = 0.0
@@ -494,6 +530,7 @@ func _spawn_monsters():
 		if detect_shape and detect_shape.shape:
 			detect_shape.shape = detect_shape.shape.duplicate()
 			detect_shape.shape.radius = monster.detection_range
+
 
 
 func play_transition(type:Transition.Type):
