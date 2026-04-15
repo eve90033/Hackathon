@@ -1,0 +1,48 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="PackedScene" uid="uid://skrlnoimlhsv" path="res://system/character/character.tscn" id="1_char"]
+[ext_resource type="Script" path="res://system/network/network_character.gd" id="2_net"]
+[ext_resource type="Texture2D" uid="uid://cb1puhmg81h5p" path="res://content/character/ninja_blue/sprite.png" id="3_sprite"]
+[ext_resource type="Resource" uid="uid://ujea2b11dl3n" path="res://content/team/player_team.tres" id="4_team"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_body"]
+radius = 7.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_hitbox"]
+radius = 10.0
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_sync"]
+properties/0/path = NodePath(".:position")
+properties/0/spawn = true
+properties/0/replication_mode = 1
+properties/1/path = NodePath(".:move_vector")
+properties/1/spawn = true
+properties/1/replication_mode = 1
+
+[node name="NetworkCharacter" instance=ExtResource("1_char")]
+script = ExtResource("2_net")
+team = ExtResource("4_team")
+
+[node name="Shape" type="CollisionShape2D" parent="Hitbox" index="0"]
+position = Vector2(0, -1)
+shape = SubResource("CircleShape2D_hitbox")
+
+[node name="Sprite" parent="." index="2"]
+texture = ExtResource("3_sprite")
+
+[node name="Shape" type="CollisionShape2D" parent="." index="3"]
+position = Vector2(0, -1)
+shape = SubResource("CircleShape2D_body")
+
+[node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
+replication_config = SubResource("SceneReplicationConfig_sync")
+delta_interval = 0.05
+
+[node name="NameLabel" type="Label" parent="."]
+offset_left = -30.0
+offset_top = -24.0
+offset_right = 30.0
+offset_bottom = -14.0
+theme_override_font_sizes/font_size = 8
+text = "Player"
+horizontal_alignment = 1

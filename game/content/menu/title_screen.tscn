@@ -22,7 +22,7 @@ offset_bottom = 11.5
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_font_sizes/font_size = 40
-text = "Ninja Adventure"
+text = "MONSTER RPG ONLINE"
 horizontal_alignment = 1
 
 [node name="Label2" type="Label" parent="."]
@@ -39,5 +39,5 @@ offset_right = 63.5
 offset_bottom = 113.0
 grow_horizontal = 2
 grow_vertical = 2
-text = "Press Start"
+text = "Press Any Key"
 horizontal_alignment = 1

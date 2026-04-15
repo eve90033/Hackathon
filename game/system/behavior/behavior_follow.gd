@@ -18,7 +18,9 @@ class_name BehaviorFollow
 		target = v
 		if !target:
 			target_pos = start_pos
-		target.teleported.connect(on_target_teleported)
+			return
+		if target.has_signal("teleported"):
+			target.teleported.connect(on_target_teleported)
 		update_process()
 @export var min_dist := 8
 @export var max_dist := 24

@@ -9,13 +9,15 @@
 - 同一個方法失敗 2 次就換路線，不要盲目重試
 
 ## 項目概述
-Cassette Beasts 風格怪獸收集 RPG，基於 NinjaAdventure 開源 Godot 項目改造。
-目前只有 NinjaAdventure 的基底系統，怪獸/戰鬥系統尚未建立。
-目標平台和多人方案尚未定案。
+MMO Lite 即時動作 RPG + 怪獸收集，基於 NinjaAdventure 開源 Godot 項目改造。
+共享世界多人體驗：登入 → 選角（92 種）→ 多人同場打怪 → 收服怪獸做同伴。
+核心架構：Godot 內建 ENet P2P，Host 制（一台當 server+client，其他 Join）。
 
 ## 技術棧
 - 引擎：Godot 4.3，GDScript
+- 多人：Godot ENet（MultiplayerSynchronizer + MultiplayerSpawner + @rpc）
 - 素材：Ninja Adventure Asset Pack (CC0 授權)
+- 設計文件：DESIGN_SUPPLEMENT.md（完整規格）
 
 ## 目錄結構
 
@@ -122,17 +124,25 @@ main.gd → world.tscn → 載入 map_village.tscn
 
 ## 尚未建立
 
-- ✗ 戰鬥系統（即時動作方向已確認可行）
-- ✗ 怪獸 AI（追逐/攻擊玩家）
-- ✗ 存檔/升級/經驗值
-- ✗ 對話/任務
-- ✗ 多人連線
-- ✗ 物品欄/背包
-- ✗ 新地圖（素材充足但未製作）
+- ✗ 多人連線（Godot ENet，架構已設計，見 DESIGN_SUPPLEMENT.md）
+- ✗ 登入 + 選角畫面（暱稱 + Host/Join + 92 種角色選擇）
+- ✗ 戰鬥系統（即時動作，狀態機已設計）
+- ✗ 怪獸 AI（BehaviorChase + 狀態機）
+- ✗ 收服 + 同伴系統（多人搶怪制）
+- ✗ XP / 升級（Lv1-4，每級 +1HP）
+- ✗ HP 掉落物
+- ✗ Boss 戰（GiantFrog，多人 HP scaling）
+- ✗ 存檔（本地 JSON）
+- ✗ 對話/任務（不做）
+- ✗ 物品欄/背包（不做）
+- ✗ 新地圖（不做）
 
 ## Godot Autoloads
 
 - ScreenShot (screenshot.gd)：F12 截圖 + 自動截圖（測試用）
+- NetworkManager（待建）：ENet 連線管理、玩家資訊同步
+- CompanionManager（待建）：同伴背包、切換、存檔
+- GameManager（待建）：全域狀態、screen shake、系統訊息
 
 ## 素材包注意事項
 
