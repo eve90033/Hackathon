@@ -7,6 +7,15 @@ extends Node2D
 var map:Map
 var network_character_scene = preload("res://system/network/network_character.tscn")
 var monster_scene = preload("res://system/character/monster_character.tscn")
+var animal_scene = preload("res://system/character/animal.tscn")
+
+const ANIMAL_BASE_PATH := "res://assets/Actor/Animal/"
+const ALL_ANIMALS := [
+	"Cat", "CatBlack", "CatCyclop", "CatOrange", "CatWhite",
+	"Chicken", "Cow", "Dog", "Dog2", "DogBlack", "DogOrange", "DogYellow",
+	"Donkey", "Fish", "Frog", "Hamster", "Horse", "Hyena", "Lion",
+	"LionCub", "Lioness", "Monkey", "Parrot", "Pig", "Racoon", "WildBoar",
+]
 
 @onready var rain: GPUParticles2D = %Rain
 @onready var snow: GPUParticles2D = %Snow
@@ -27,19 +36,18 @@ var hud_label:Label
 var local_player:Character
 
 # Monster spawn definitions: [texture_path, position, hp, damage, speed, detection, xp]
-const MONSTER_SPAWNS := [
-	# Weak zone — east of spawn
-	{"key": "Slime", "tex": "res://assets/Actor/Monster/Slime/Slime.png", "pos": Vector2(250, 80), "hp": 3, "dmg": 1, "spd": 45, "det": 70, "xp": 10},
-	{"key": "Slime2", "tex": "res://assets/Actor/Monster/Slime/Slime.png", "pos": Vector2(280, 40), "hp": 3, "dmg": 1, "spd": 45, "det": 70, "xp": 10},
-	{"key": "Slime3", "tex": "res://assets/Actor/Monster/Slime/Slime.png", "pos": Vector2(230, 130), "hp": 3, "dmg": 1, "spd": 45, "det": 70, "xp": 10},
-	{"key": "Racoon", "tex": "res://assets/Actor/Monster/Racoon/SpriteSheet.png", "pos": Vector2(300, 100), "hp": 3, "dmg": 1, "spd": 50, "det": 80, "xp": 10},
-	{"key": "Racoon2", "tex": "res://assets/Actor/Monster/Racoon/SpriteSheet.png", "pos": Vector2(320, 50), "hp": 3, "dmg": 1, "spd": 50, "det": 80, "xp": 10},
-	# Medium zone — northeast
-	{"key": "Dragon", "tex": "res://assets/Actor/Monster/Dragon/SpriteSheet.png", "pos": Vector2(400, -80), "hp": 5, "dmg": 2, "spd": 55, "det": 90, "xp": 25},
-	{"key": "Dragon2", "tex": "res://assets/Actor/Monster/Dragon/SpriteSheet.png", "pos": Vector2(450, -40), "hp": 5, "dmg": 2, "spd": 55, "det": 90, "xp": 25},
-	# Strong zone — west
-	{"key": "Eye", "tex": "res://assets/Actor/Monster/Eye/Eye.png", "pos": Vector2(-200, -130), "hp": 8, "dmg": 2, "spd": 60, "det": 100, "xp": 50},
-	{"key": "Eye2", "tex": "res://assets/Actor/Monster/Eye/Eye.png", "pos": Vector2(-230, -100), "hp": 8, "dmg": 2, "spd": 60, "det": 100, "xp": 50},
+const MONSTER_BASE_PATH := "res://assets/Actor/Monster/"
+const ALL_MONSTERS := [
+	"Axolot", "AxolotBlue", "Bamboo", "BambooYellow", "Bear", "Beast", "Beast2",
+	"BlueBat", "Butterfly", "ButterflyBlue", "Cyclope", "Cyclope2", "Dragon",
+	"DragonYellow", "Eye", "Eye2", "Fish", "FishRed", "Flam", "Flam2",
+	"GoldRacoon", "GreenOctopus", "Grey Trex", "HeartGreen", "HeartRed",
+	"KappaGreen", "KappaRed", "LanternGreen", "LanternRed", "Larva", "Larva2",
+	"Lizard", "Lizard2", "Mole", "Mole2", "Mollusc", "Mollusc2", "Mouse",
+	"MouseBlack", "Mushroom", "Mushroom2", "Octopus", "Octopus2", "Owl", "Owl2",
+	"Panda", "Racoon", "RedOctopus", "Reptile", "Reptile2", "Skull", "SkullBlue",
+	"Slime", "Slime2", "Slime3", "Slime4", "Snake", "Snake2", "Snake3", "Snake4",
+	"SpiderRed", "SpiderYellow", "Spirit", "Spirit2", "TRex", "YellowsBat",
 ]
 
 
@@ -81,6 +89,8 @@ func _spawn_single_player():
 	player_container.add_child(character)
 	camera_grid.target = character
 	local_player = character
+	# Load saved data (level, XP, companion)
+	_load_player_data(character)
 	# Wire HP UI
 	if character.resource_life:
 		player_ui.resource_life = character.resource_life
@@ -104,11 +114,10 @@ func _spawn_player(peer_id: int):
 	if peer_id == multiplayer.get_unique_id():
 		camera_grid.target = character
 		local_player = character
-		# Wire HP UI after character is ready
-		character.ready.connect(func():
-			if character.resource_life:
-				player_ui.resource_life = character.resource_life
-		)
+		# Wire HP UI + load saved data
+		if character.resource_life:
+			player_ui.resource_life = character.resource_life
+		_load_player_data(character)
 
 
 func _on_player_connected(peer_id: int):
@@ -247,6 +256,12 @@ func _make_label(text:String, pos:Vector2, color:Color) -> Label:
 
 
 var face_loaded := false
+var companion_face_icon:Node
+var companion_face_key := ""
+var save_timer := 0.0
+var last_save_xp := 0
+var last_save_level := 0
+var last_save_companion := ""
 
 func _process(_delta):
 	if !local_player:
@@ -291,6 +306,106 @@ func _process(_delta):
 			xp_bar.size.x = bar_w
 			xp_label.text = "MAX"
 
+	# Auto-save check
+	save_timer += _delta
+	if save_timer >= 2.0:
+		save_timer = 0.0
+		_auto_save()
+
+	# Companion face: check for companion following local_player
+	var current_comp_key := ""
+	for node in get_tree().get_nodes_in_group("companion"):
+		if node.target == local_player:
+			current_comp_key = node.monster_key
+			break
+	if current_comp_key != companion_face_key:
+		companion_face_key = current_comp_key
+		if companion_face_icon and is_instance_valid(companion_face_icon):
+			companion_face_icon.queue_free()
+			companion_face_icon = null
+		if companion_face_key != "":
+			# Strip trailing digits: "Slime2" -> "Slime"
+			var clean_key = companion_face_key.rstrip("0123456789")
+			var fp = "res://assets/Actor/Monster/%s/Faceset.png" % clean_key
+			if ResourceLoader.exists(fp):
+				var tr = TextureRect.new()
+				tr.texture = load(fp)
+				tr.position = Vector2(3, 21)
+				tr.scale = Vector2(0.37, 0.37)
+				tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+				hud_node.add_child(tr)
+				companion_face_icon = tr
+
+
+func _auto_save():
+	if !local_player:
+		return
+	var cur_comp := ""
+	for node in get_tree().get_nodes_in_group("companion"):
+		if node.target == local_player:
+			cur_comp = node.monster_key
+			break
+	# Only save if something changed
+	if local_player.xp == last_save_xp and local_player.level == last_save_level and cur_comp == last_save_companion:
+		return
+	last_save_xp = local_player.xp
+	last_save_level = local_player.level
+	last_save_companion = cur_comp
+	var user_id = NetworkManager.my_info.get("user_id", "")
+	if user_id == "":
+		return
+	var save_data = {
+		"level": local_player.level,
+		"xp": local_player.xp,
+		"companion": cur_comp,
+	}
+	if NetworkManager.is_host():
+		NetworkManager.save_character(user_id, save_data)
+	else:
+		NetworkManager.save_character.rpc_id(1, user_id, save_data)
+
+
+func _load_player_data(character:Character):
+	var user_id = NetworkManager.my_info.get("user_id", "")
+	if user_id == "":
+		return
+	var data = NetworkManager.player_database.get(user_id, {})
+	# Restore level + XP
+	if data.has("level"):
+		character.level = data["level"]
+		character.attack_damage = character.ATK_PER_LEVEL[character.level - 1]
+	if data.has("xp"):
+		character.xp = data["xp"]
+	if character.resource_life and data.has("level"):
+		character.resource_life.max_life = character.HP_PER_LEVEL[character.level - 1]
+		character.resource_life.life = character.resource_life.max_life
+	# Restore companion
+	if data.has("companion") and data["companion"] != "":
+		_restore_companion(character, data["companion"])
+	# Sync save state so auto-save doesn't overwrite with defaults
+	last_save_level = character.level
+	last_save_xp = character.xp
+	last_save_companion = data.get("companion", "")
+	save_timer = 0.0
+
+
+func _restore_companion(owner:Node2D, monster_key:String):
+	var comp_scene = preload("res://system/companion/companion.tscn")
+	var comp = comp_scene.instantiate()
+	comp.global_position = owner.global_position + Vector2(16, 16)
+	comp.target = owner
+	comp.monster_key = monster_key
+	add_child(comp)
+	# Find sprite texture
+	var clean_key = monster_key.rstrip("0123456789")
+	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % clean_key
+	if !ResourceLoader.exists(tex_path):
+		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key]
+	if !ResourceLoader.exists(tex_path):
+		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key.to_lower()]
+	if ResourceLoader.exists(tex_path):
+		comp.sprite.texture = load(tex_path)
+
 
 func _set_face(character_key:String):
 	var face_path = "res://assets/Actor/Character/%s/Faceset.png" % character_key
@@ -312,27 +427,73 @@ func _set_face(character_key:String):
 	face_icon = tr
 
 
+func _spawn_animals():
+	var center := Vector2(56, 53)
+	var count := ALL_ANIMALS.size()
+	for i in count:
+		var key = ALL_ANIMALS[i]
+		var animal = animal_scene.instantiate()
+		animal.name = "Animal_" + key
+		# Scatter around village
+		var angle = (i / float(count)) * TAU
+		var radius = 30.0 + randf() * 60.0
+		animal.position = center + Vector2(cos(angle), sin(angle)) * radius
+		add_child(animal)
+		# Set texture
+		var tex_path = ANIMAL_BASE_PATH + key + "/SpriteSheet.png"
+		if ResourceLoader.exists(tex_path):
+			animal.sprite.texture = load(tex_path)
+
+
 func _spawn_monsters():
-	for data in MONSTER_SPAWNS:
+	var spawn_center := Vector2(56, 53)  # Player spawn
+	var village_min := Vector2(-160, -88)  # Village grid cell bounds
+	var village_max := Vector2(160, 88)
+	var ring_radius := 200.0  # Start outside village
+	var count := ALL_MONSTERS.size()
+
+	for i in count:
+		var key = ALL_MONSTERS[i]
 		var monster = monster_scene.instantiate()
-		monster.name = data["key"]
-		monster.position = data["pos"]
-		monster.max_hp = data["hp"]
-		monster.contact_damage = data["dmg"]
-		monster.speed = data["spd"]
-		monster.detection_range = data["det"]
-		monster.xp_value = data["xp"]
-		monster.monster_key = data["key"]
+		monster.name = key
+
+		# Spread in expanding spiral
+		var ring = i / 12  # 12 monsters per ring
+		var angle = (i % 12) * (TAU / 12) + ring * 0.5
+		var radius = ring_radius + ring * 80.0
+		var pos = spawn_center + Vector2(cos(angle), sin(angle)) * radius
+		# Push out of village cell
+		if pos.x > village_min.x and pos.x < village_max.x and pos.y > village_min.y and pos.y < village_max.y:
+			var dir = (pos - spawn_center).normalized()
+			pos = spawn_center + dir * (ring_radius + 50)
+		monster.position = pos
+
+		# Stats scale with distance from center
+		var tier = mini(ring, 2)  # 0=weak, 1=medium, 2=strong
+		monster.max_hp = [3, 5, 10][tier]
+		monster.contact_damage = [1, 2, 3][tier]
+		monster.speed = [45, 55, 60][tier]
+		monster.detection_range = [70, 90, 100][tier]
+		monster.xp_value = [10, 25, 50][tier]
+		monster.monster_key = key
+
 		add_child(monster)
-		# Set sprite texture after adding to tree
-		var tex = load(data["tex"])
-		if tex:
-			monster.sprite.texture = tex
+
+		# Find sprite texture
+		var tex_path = MONSTER_BASE_PATH + key + "/SpriteSheet.png"
+		if !ResourceLoader.exists(tex_path):
+			tex_path = MONSTER_BASE_PATH + key + "/" + key + ".png"
+		if !ResourceLoader.exists(tex_path):
+			# Try lowercase
+			tex_path = MONSTER_BASE_PATH + key + "/" + key.to_lower() + ".png"
+		if ResourceLoader.exists(tex_path):
+			monster.sprite.texture = load(tex_path)
+
 		# Update detection area radius
 		var detect_shape = monster.get_node("DetectionArea/DetectionShape")
 		if detect_shape and detect_shape.shape:
 			detect_shape.shape = detect_shape.shape.duplicate()
-			detect_shape.shape.radius = data["det"]
+			detect_shape.shape.radius = monster.detection_range
 
 
 func play_transition(type:Transition.Type):
