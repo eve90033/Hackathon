@@ -1,0 +1,23 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://system/item/hp_pickup.gd" id="1_hp"]
+[ext_resource type="Texture2D" path="res://content/ui/heart.png" id="2_heart"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_pickup"]
+radius = 20.0
+
+[node name="HpPickup" type="Area2D"]
+collision_layer = 0
+collision_mask = 6
+monitoring = true
+monitorable = false
+script = ExtResource("1_hp")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+position = Vector2(0, -6)
+texture = ExtResource("2_heart")
+hframes = 5
+frame = 4
+
+[node name="Shape" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_pickup")

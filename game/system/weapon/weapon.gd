@@ -45,16 +45,31 @@ func update_weapon():
 		return
 	match state:
 		State.BACK:
-			sprite.texture = resource_weapon.sprite_in_hand
-			show_behind_parent = direction.y < 0
-			sprite.position = Vector2(10,10)*direction
-			sprite.rotation = direction.angle()-(PI/2)
+			visible = false
+		State.ATTACK:
+			visible = true
+			sprite.texture = resource_weapon.sprite
+			sprite.rotation = direction.angle()
+			sprite.position = direction * 16.0
+			show_behind_parent = direction.y >= 0
 		_:
+			visible = true
 			sprite.rotation = 0
 			sprite.texture = resource_weapon.sprite
 			sprite.offset = Vector2(-7,-5)*direction
 			show_behind_parent = direction.y >= 0
 
 
+func _ready():
+	if !Engine.is_editor_hint():
+		set_damage_active(false)
+		visible = false
+
+
 func use_weapon():
-	print("use_weapon")
+	state = State.ATTACK
+
+
+func set_damage_active(active:bool):
+	if damage_area:
+		damage_area.monitoring = active

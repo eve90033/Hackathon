@@ -98,3 +98,17 @@ func _notification(what):
 
 func snap_to_grid():
 	set_world_position(current_cell * grid_size)
+
+
+var shake_tween:Tween
+
+func shake(intensity:=2.0, duration:=0.15):
+	if shake_tween:
+		shake_tween.kill()
+	shake_tween = create_tween()
+	var steps := 4
+	var step_time := duration / steps
+	for i in steps:
+		var rand_offset := Vector2(randf_range(-1,1), randf_range(-1,1)) * intensity
+		shake_tween.tween_property(self, "offset", rand_offset, step_time)
+	shake_tween.tween_property(self, "offset", Vector2.ZERO, step_time)
