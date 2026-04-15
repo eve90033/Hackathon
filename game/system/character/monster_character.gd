@@ -5,6 +5,7 @@ class_name MonsterCharacter
 enum AIState { IDLE, CHASE, ATTACK, STUN, HIT, DEAD }
 
 signal monster_died(monster)
+signal monster_captured(monster, captor)
 
 @export_category("physics")
 @export var speed = 60.0
@@ -22,6 +23,7 @@ signal monster_died(monster)
 @export var respawn_time := 30.0
 
 const HP_PICKUP_SCENE = preload("res://system/item/hp_pickup.tscn")
+const COMPANION_SCENE = preload("res://system/companion/companion.tscn")
 
 @export var team:ResourceDamageTeam
 
@@ -52,6 +54,9 @@ var push_velocity := Vector2.ZERO
 var sfx_hit:AudioStreamPlayer
 var sfx_alert:AudioStreamPlayer
 var sfx_die:AudioStreamPlayer
+var sfx_capture_ok:AudioStreamPlayer
+var sfx_capture_fail:AudioStreamPlayer
+var capture_cooldown := 0.0
 
 
 func _ready():
@@ -59,6 +64,7 @@ func _ready():
 		return
 	hp = max_hp
 	home_position = global_position
+	add_to_group("monster")
 	# Only collide with walls, not players
 	set_collision_mask_value(2, false)
 	# SFX
@@ -74,6 +80,14 @@ func _ready():
 	sfx_die.stream = load("res://assets/Audio/Sounds/Hit & Impact/Impact3.wav")
 	sfx_die.volume_db = -5
 	add_child(sfx_die)
+	sfx_capture_ok = AudioStreamPlayer.new()
+	sfx_capture_ok.stream = load("res://assets/Audio/Jingles/Success1.wav")
+	sfx_capture_ok.volume_db = -5
+	add_child(sfx_capture_ok)
+	sfx_capture_fail = AudioStreamPlayer.new()
+	sfx_capture_fail.stream = load("res://assets/Audio/Sounds/Alert/Alert.wav")
+	sfx_capture_fail.volume_db = -5
+	add_child(sfx_capture_fail)
 
 	# Wire hitbox damage signal
 	if hitbox:
@@ -92,6 +106,10 @@ func _ready():
 func _physics_process(delta:float):
 	if Engine.is_editor_hint():
 		return
+
+	# Capture cooldown
+	if capture_cooldown > 0:
+		capture_cooldown -= delta
 
 	# Flash fade
 	if flash_timer > 0:
@@ -348,6 +366,98 @@ func _find_nearest_player():
 			nearest = p
 	if nearest:
 		target = nearest
+
+
+func attempt_capture(captor:Node2D):
+	if ai_state == AIState.DEAD:
+		return
+	if capture_cooldown > 0:
+		return
+	capture_cooldown = 1.0  # 1s cooldown between attempts
+
+	# Fail rate = current HP / max HP (lower HP = easier to capture)
+	var fail_rate = float(hp) / float(max_hp)
+	if randf() >= fail_rate:
+		# Success
+		_capture_success(captor)
+	else:
+		# Fail
+		_capture_fail()
+
+
+func _capture_success(captor:Node2D):
+	ai_state = AIState.DEAD
+	if damage_area:
+		damage_area.monitoring = false
+	if sfx_capture_ok:
+		sfx_capture_ok.play()
+
+	# Floating text
+	_show_floating_text("收服成功！", Color(0.2, 1.0, 0.3))
+
+	# Shrink + fade animation
+	var tween = create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tween.tween_property(sprite, "modulate:a", 0.0, 0.4)
+	tween.set_parallel(false)
+	tween.tween_callback(func():
+		# Give XP
+		_give_xp()
+		# Spawn companion
+		_spawn_companion(captor)
+		# Disable collision
+		set_deferred("collision_layer", 0)
+		set_deferred("collision_mask", 0)
+		if hitbox:
+			hitbox.monitorable = false
+		visible = false
+		monster_captured.emit(self, captor)
+	)
+
+
+func _capture_fail():
+	if sfx_capture_fail:
+		sfx_capture_fail.play()
+	# Flash white
+	sprite.modulate = Color(5, 5, 5)
+	flash_timer = 0.15
+	# Floating text
+	_show_floating_text("收服失敗...", Color(1.0, 0.4, 0.3))
+
+
+func _spawn_companion(captor:Node2D):
+	# Remove existing companion
+	for old in get_tree().get_nodes_in_group("companion"):
+		if old.target == captor:
+			old.queue_free()
+	var comp = COMPANION_SCENE.instantiate()
+	comp.global_position = global_position
+	comp.target = captor
+	comp.monster_key = monster_key
+	get_tree().current_scene.add_child(comp)
+	if sprite and sprite.texture:
+		comp.sprite.texture = sprite.texture
+
+
+func _show_floating_text(text:String, color:Color):
+	var label = Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 8)
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.position = Vector2(-20, -20)
+	add_child(label)
+	# Float up and fade
+	var tween = create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "position:y", -40.0, 0.8)
+	tween.tween_property(label, "modulate:a", 0.0, 0.8)
+	tween.set_parallel(false)
+	tween.tween_callback(label.queue_free)
 
 
 func _on_detection_entered(body:Node2D):

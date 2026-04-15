@@ -252,6 +252,24 @@ func _on_hitbox_damage(damage:ResourceDamage, at_pos:Vector2):
 	take_hit(damage.amount, at_pos)
 
 
+func try_capture():
+	if state == State.DEAD:
+		return
+	# Find nearest monster within 40px
+	var monsters = get_tree().get_nodes_in_group("monster")
+	var nearest:Node2D = null
+	var nearest_dist := 40.0
+	for m in monsters:
+		if !m.is_inside_tree() or m.ai_state == m.AIState.DEAD:
+			continue
+		var d = global_position.distance_to(m.global_position)
+		if d < nearest_dist:
+			nearest_dist = d
+			nearest = m
+	if nearest and nearest.has_method("attempt_capture"):
+		nearest.attempt_capture(self)
+
+
 func push(from_pos:Vector2, force:float):
 	push_velocity = (global_position - from_pos).normalized() * force
 

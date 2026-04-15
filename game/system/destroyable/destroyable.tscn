@@ -28,6 +28,7 @@ particles_anim_v_frames = 1
 particles_anim_loop = false
 
 [node name="Destroyable" type="CharacterBody2D"]
+collision_layer = 2
 collision_mask = 0
 motion_mode = 1
 script = ExtResource("1_w1gja")

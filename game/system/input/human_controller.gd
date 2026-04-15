@@ -31,3 +31,5 @@ func _process(delta: float) -> void:
 	parent.move_vector = Input.get_vector(action_left,action_right,action_up,action_down)
 	if Input.is_action_just_pressed("attack"):
 		parent.start_attack()
+	if Input.is_action_just_pressed("capture"):
+		parent.try_capture()

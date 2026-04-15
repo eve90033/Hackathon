@@ -141,9 +141,13 @@ func save_character(user_id: String, data: Dictionary):
 	# Only server handles this
 	if !multiplayer.is_server():
 		return
-	player_database[user_id] = data
+	# Merge into existing data (don't overwrite everything)
+	if !player_database.has(user_id):
+		player_database[user_id] = {}
+	for key in data:
+		player_database[user_id][key] = data[key]
 	_save_database()
-	print("[Net] Saved character for user_id=%s: %s" % [user_id, data])
+	print("[Net] Saved for user_id=%s: %s" % [user_id, data])
 
 
 func login_as_host(user_id: String):
