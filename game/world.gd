@@ -51,12 +51,33 @@ const ALL_MONSTERS := [
 ]
 
 
-func _ready():
-	generate_map(starting_map)
-	camera_grid.animation_finished.connect(on_camera_animation_finished)
+func _enter_tree():
+	# Must set spawn_function before _ready, per Godot docs
+	var spawner = get_node_or_null("PlayerContainer/PlayerSpawner")
+	if spawner:
+		spawner.spawn_function = _spawn_player_func
 
-	# HUD
-	_setup_hud()
+
+func _ready():
+	var is_server = NetworkManager.is_dedicated_server
+
+	generate_map(starting_map)
+
+	if !is_server:
+		camera_grid.animation_finished.connect(on_camera_animation_finished)
+		_setup_hud()
+	else:
+		# Server: disable all rendering
+		rain.emitting = false
+		snow.emitting = false
+		cloud.emitting = false
+		leaf.emitting = false
+		raylight.emitting = false
+		fog.visible = false
+		music.stop()
+		player_ui.visible = false
+		transition.visible = false
+		color_correction.visible = false
 
 	# Spawn monsters
 	_spawn_monsters()
@@ -70,25 +91,18 @@ func _ready():
 		var my_id = multiplayer.get_unique_id()
 		NetworkManager.players[my_id] = NetworkManager.my_info.duplicate()
 
-		# Watch for our character being spawned
-		player_container.child_entered_tree.connect(_on_player_node_added)
-
-		# Setup MultiplayerSpawner for player replication
-		var spawner = MultiplayerSpawner.new()
-		spawner.name = "PlayerSpawner"
-		spawner.spawn_path = player_container.get_path()
-		spawner.spawn_function = _spawn_player_for_spawner
-		player_container.add_child(spawner)
-
 		if multiplayer.is_server():
-			# Host: spawn self + any already connected peers
-			_server_spawn_player(my_id)
+			# Server: spawn any already connected peers
+			var spawner = player_container.get_node("PlayerSpawner")
 			for pid in NetworkManager.players:
-				if pid != my_id:
-					_server_spawn_player(pid)
+				if pid != 1:
+					spawner.spawn(pid)
 		else:
-			# Client: request server to spawn us
-			_request_spawn.rpc_id(1)
+			# Client: wait a frame then tell server we're ready
+			get_tree().create_timer(1.5).timeout.connect(func():
+				print("[World] Client sending _request_spawn, my_id=%d" % multiplayer.get_unique_id())
+				_request_spawn.rpc_id(1)
+			)
 	else:
 		_spawn_single_player()
 
@@ -109,13 +123,27 @@ func _spawn_single_player():
 		player_ui.resource_life = character.resource_life
 
 
-func _on_player_node_added(node:Node):
-	if node is NetworkCharacter and node.peer_id == multiplayer.get_unique_id():
-		# This is our character
-		call_deferred("_setup_local_player", node)
+var _pending_local_setup := false
+
+func _spawn_player_func(data) -> Node:
+	# Called on ALL peers by MultiplayerSpawner
+	var peer_id = int(data)
+	var info = NetworkManager.players.get(peer_id, NetworkManager.my_info)
+	var character = network_character_scene.instantiate()
+	character.peer_id = peer_id
+	character.player_name = info.get("name", "Player")
+	character.character_key = info.get("character", "Knight")
+	character.name = "Player_%d" % peer_id
+	character.position = Vector2(56, 53)
+	print("[World] Spawned Player_%d (%s) is_me=%s" % [peer_id, character.character_key, str(peer_id == multiplayer.get_unique_id())])
+	if peer_id == multiplayer.get_unique_id():
+		_pending_local_setup = true
+	return character
 
 
 func _setup_local_player(character):
+	if !is_instance_valid(character):
+		return
 	camera_grid.target = character
 	local_player = character
 	if character.resource_life:
@@ -128,37 +156,20 @@ func _request_spawn():
 	if !multiplayer.is_server():
 		return
 	var sender = multiplayer.get_remote_sender_id()
-	_server_spawn_player(sender)
-
-
-func _server_spawn_player(peer_id:int):
-	# Only server spawns — MultiplayerSpawner replicates to clients
-	if !multiplayer.is_server():
+	print("[World] Server received _request_spawn from peer %d" % sender)
+	if player_container.has_node("Player_%d" % sender):
+		print("[World] Player_%d already exists, skipping" % sender)
 		return
-	if player_container.has_node("Player_%d" % peer_id):
-		return
-	var spawner = player_container.get_node_or_null("PlayerSpawner")
-	if spawner:
-		spawner.spawn(peer_id)
-
-
-func _spawn_player_for_spawner(data) -> Node:
-	var peer_id = data as int
-	var info = NetworkManager.players.get(peer_id, NetworkManager.my_info)
-	var character = network_character_scene.instantiate()
-	character.peer_id = peer_id
-	character.player_name = info.get("name", "Player")
-	character.character_key = info.get("character", "Knight")
-	character.name = "Player_%d" % peer_id
-	character.position = Vector2(56, 53)
-	return character
+	var spawner = player_container.get_node("PlayerSpawner")
+	print("[World] Server spawning Player_%d via spawner" % sender)
+	spawner.spawn(sender)
 
 
 func _on_player_connected(peer_id: int):
 	var info = NetworkManager.players.get(peer_id, {})
 	print("[World] Player connected: peer=%d name=%s char=%s" % [peer_id, info.get("name","?"), info.get("character","?")])
-	if multiplayer.is_server():
-		_server_spawn_player(peer_id)
+	# Don't spawn here — wait for _request_spawn from client
+	# (client sends it after their world is loaded)
 
 
 func _on_player_disconnected(peer_id: int):
@@ -186,7 +197,8 @@ func generate_map(map_scene:PackedScene):
 
 
 func apply_environment(resource_environment:ResourceEnvironment):
-	# METEO
+	if NetworkManager.is_dedicated_server:
+		return
 	if !resource_environment:
 		return
 	rain.emitting = ResourceEnvironment.Meteo.RAIN in resource_environment.meteo_list
@@ -300,6 +312,25 @@ var last_save_level := 0
 var last_save_companion := ""
 
 func _process(_delta):
+	if NetworkManager.is_dedicated_server:
+		return
+
+	# Find our character if not yet found
+	if !local_player and multiplayer.has_multiplayer_peer():
+		var my_id = multiplayer.get_unique_id()
+		var children = player_container.get_children()
+		var found_chars = []
+		for child in children:
+			if child is NetworkCharacter:
+				found_chars.append("peer=%d auth=%d name=%s" % [child.peer_id, child.get_multiplayer_authority(), child.name])
+				if child.peer_id == my_id:
+					_setup_local_player(child)
+					print("[World] LOCAL PLAYER FOUND: peer_id=%d my_id=%d" % [child.peer_id, my_id])
+					break
+		if !local_player and found_chars.size() > 0:
+			if Engine.get_process_frames() % 60 == 0:
+				print("[World] SEARCHING my_id=%d children=%s" % [my_id, str(found_chars)])
+
 	if !local_player:
 		return
 

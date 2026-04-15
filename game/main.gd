@@ -11,7 +11,10 @@ var world_scene = preload("res://world.tscn")
 
 func _ready() -> void:
 	add_to_group("main")
-	if "--auto-skip" in OS.get_cmdline_user_args():
+	if "--server" in OS.get_cmdline_user_args():
+		# Dedicated server mode: no UI, just host and run world
+		_start_dedicated_server()
+	elif "--auto-skip" in OS.get_cmdline_user_args():
 		get_tree().create_timer(0.5).timeout.connect(_auto_enter_world)
 	else:
 		_show_scene(login_screen_scene)
@@ -59,11 +62,25 @@ func _on_character_created(player_name: String, character_name: String):
 	enter_world()
 
 
+func _start_dedicated_server():
+	print("[Server] Starting dedicated server...")
+	NetworkManager.is_dedicated_server = true
+	NetworkManager.host_game()
+	enter_world()
+	print("[Server] World loaded, waiting for players on port %d" % NetworkManager.PORT)
+
+
 func _auto_enter_world():
-	# Setup network for single-player testing
+	# Auto-test mode: join existing server
 	NetworkManager.my_info.name = "TestPlayer"
 	NetworkManager.my_info.character = "Knight"
-	NetworkManager.host_game()
+	var err = NetworkManager.join_game(NetworkManager.server_url)
+	if err != OK:
+		# No server, host ourselves
+		NetworkManager.host_game()
+	# Wait for connection before entering world
+	if !multiplayer.is_server():
+		await NetworkManager.connection_succeeded
 	enter_world()
 
 

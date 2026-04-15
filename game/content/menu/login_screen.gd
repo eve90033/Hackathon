@@ -23,9 +23,14 @@ func _on_google_login():
 	var user_id = _generate_user_id()
 	NetworkManager.my_info.user_id = user_id
 
-	# Auto-connect to server
+	# Connect to server
 	status_label.text = "連線中..."
-	NetworkManager.auto_connect()
+	var server_url = NetworkManager.server_url
+	print("[Login] Connecting to %s" % server_url)
+	var err = NetworkManager.join_game(server_url)
+	if err != OK:
+		status_label.text = "連線失敗，嘗試自己建立..."
+		NetworkManager.auto_connect()
 
 
 func _on_connected():

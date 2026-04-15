@@ -32,20 +32,23 @@ func _ready():
 	_load_database()
 
 
+var server_url := "ws://localhost:%d" % PORT
+var is_dedicated_server := false
+
+
 func auto_connect():
 	# Try to host first. If port is taken, join instead.
-	var peer = ENetMultiplayerPeer.new()
-	var err = peer.create_server(PORT, MAX_PLAYERS)
+	var peer = WebSocketMultiplayerPeer.new()
+	var err = peer.create_server(PORT, "*")
 	if err == OK:
 		multiplayer.multiplayer_peer = peer
 		players[1] = my_info.duplicate()
-		print("[Net] Hosting on port %d" % PORT)
+		print("[Net] WebSocket Server on port %d" % PORT)
 		connection_succeeded.emit()
 	else:
-		# Port taken = server already exists, join it
-		print("[Net] Port taken, joining existing server...")
-		peer = ENetMultiplayerPeer.new()
-		err = peer.create_client(DEFAULT_HOST_IP, PORT)
+		print("[Net] Port taken, joining %s" % server_url)
+		peer = WebSocketMultiplayerPeer.new()
+		err = peer.create_client(server_url)
 		if err != OK:
 			push_error("[Net] Failed to connect")
 			return
@@ -53,14 +56,14 @@ func auto_connect():
 
 
 func _become_host():
-	var peer = ENetMultiplayerPeer.new()
-	var err = peer.create_server(PORT, MAX_PLAYERS)
+	var peer = WebSocketMultiplayerPeer.new()
+	var err = peer.create_server(PORT, "*")
 	if err != OK:
 		push_error("[Net] Failed to create server: %s" % err)
 		return
 	multiplayer.multiplayer_peer = peer
 	players[1] = my_info.duplicate()
-	print("[Net] Hosting on port %d" % PORT)
+	print("[Net] WebSocket Server on port %d" % PORT)
 	connection_succeeded.emit()
 
 
@@ -70,8 +73,13 @@ func host_game():
 
 
 func join_game(address: String):
-	var peer = ENetMultiplayerPeer.new()
-	var err = peer.create_client(address, PORT)
+	var url = address
+	if !url.begins_with("ws://") and !url.begins_with("wss://"):
+		url = "ws://%s:%d" % [address, PORT]
+	print("[Net] Joining server at %s" % url)
+	var peer = WebSocketMultiplayerPeer.new()
+	var err = peer.create_client(url)
+	print("[Net] create_client result: %d" % err)
 	if err != OK:
 		return err
 	multiplayer.multiplayer_peer = peer
@@ -97,9 +105,9 @@ func _on_connected_to_server():
 
 
 func _on_connection_failed():
-	print("[Net] Join failed, becoming host...")
+	print("[Net] Connection failed!")
 	multiplayer.multiplayer_peer = null
-	_become_host()
+	connection_failed.emit()
 
 
 func _on_server_disconnected():

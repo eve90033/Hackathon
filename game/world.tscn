@@ -186,6 +186,10 @@ script = ExtResource("11_w52t8")
 [node name="PlayerContainer" type="Node" parent="."]
 unique_name_in_owner = true
 
+[node name="PlayerSpawner" type="MultiplayerSpawner" parent="PlayerContainer"]
+_spawnable_scenes = PackedStringArray()
+spawn_path = NodePath("..")
+
 [node name="CameraGrid" type="Camera2D" parent="."]
 unique_name_in_owner = true
 offset = Vector2(24, 16)

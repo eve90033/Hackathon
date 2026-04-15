@@ -6,6 +6,10 @@ const AUTO_SCREENSHOT_DELAY := 2.0
 const AUTO_SCREENSHOT_COUNT := 3
 
 func _ready():
+	if NetworkManager.is_dedicated_server or DisplayServer.get_name() == "headless":
+		set_process(false)
+		set_process_input(false)
+		return
 	auto_screenshot_timer = AUTO_SCREENSHOT_DELAY
 
 func _process(delta):
