@@ -16,6 +16,8 @@ signal teleported
 @export var actor_scene:PackedScene:
 	set(v):
 		actor_scene = v
+		if !actor_scene:
+			return
 		if !is_inside_tree():
 			await ready
 		if actor:

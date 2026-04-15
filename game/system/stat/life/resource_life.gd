@@ -28,7 +28,7 @@ func heal(heal_value = -1):
 	if heal_value == -1:
 		life = max_life
 	else:
-		life += max_life
+		life += heal_value
 	healed.emit()
 
 
@@ -37,8 +37,8 @@ func damage(damage_value = -1):
 		return
 	if damage_value == -1:
 		kill()
-	else:
-		life -= damage_value
+		return
+	life -= damage_value
 	if life <= 0:
 		killed.emit()
 	damaged.emit()

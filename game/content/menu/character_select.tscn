@@ -1,0 +1,109 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://content/menu/character_select.gd" id="1_select"]
+[ext_resource type="Theme" uid="uid://dx4r0mviklhsx" path="res://theme/theme_1/theme_1.tres" id="2_theme"]
+
+[node name="CharacterSelect" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+script = ExtResource("1_select")
+
+[node name="BG" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.06, 0.08, 0.1, 1)
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 12.0
+offset_right = -20.0
+offset_bottom = -12.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 6
+
+[node name="TitleLabel" type="Label" parent="VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "創建你的角色"
+horizontal_alignment = 1
+
+[node name="GridContainer" type="GridContainer" parent="VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 20
+theme_override_constants/h_separation = 2
+theme_override_constants/v_separation = 2
+
+[node name="BottomRow" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 140)
+theme_override_constants/separation = 30
+alignment = 1
+
+[node name="PreviewCenter" type="CenterContainer" parent="VBox/BottomRow"]
+layout_mode = 2
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="VBox/BottomRow/PreviewCenter"]
+layout_mode = 2
+custom_minimum_size = Vector2(64, 64)
+texture_filter = 0
+stretch = true
+stretch_shrink = 4
+
+[node name="SubViewport" type="SubViewport" parent="VBox/BottomRow/PreviewCenter/SubViewportContainer"]
+transparent_bg = true
+handle_input_locally = false
+canvas_item_default_texture_filter = 0
+snap_2d_transforms_to_pixel = true
+size = Vector2i(16, 16)
+render_target_update_mode = 4
+
+[node name="PreviewSprite" type="Sprite2D" parent="VBox/BottomRow/PreviewCenter/SubViewportContainer/SubViewport"]
+position = Vector2(8, 8)
+texture_filter = 0
+hframes = 4
+vframes = 7
+
+[node name="InfoBox" type="VBoxContainer" parent="VBox/BottomRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(250, 0)
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="NameLabel" type="Label" parent="VBox/BottomRow/InfoBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Knight"
+horizontal_alignment = 1
+
+[node name="NameEdit" type="LineEdit" parent="VBox/BottomRow/InfoBox"]
+layout_mode = 2
+max_length = 12
+placeholder_text = "輸入暱稱"
+
+[node name="ConfirmButton" type="Button" parent="VBox/BottomRow/InfoBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 36)
+text = "開始冒險"
+
+[node name="HintLabel" type="Label" parent="VBox/BottomRow/InfoBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+theme_override_font_sizes/font_size = 12
+text = "方向鍵選擇角色"
+horizontal_alignment = 1

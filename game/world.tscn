@@ -183,6 +183,9 @@ texture = ExtResource("16_wcll6")
 stretch_mode = 1
 script = ExtResource("11_w52t8")
 
+[node name="PlayerContainer" type="Node" parent="."]
+unique_name_in_owner = true
+
 [node name="CameraGrid" type="Camera2D" parent="."]
 unique_name_in_owner = true
 offset = Vector2(24, 16)
