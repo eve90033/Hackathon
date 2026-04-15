@@ -1,0 +1,22 @@
+# Godot
+game/.godot/
+game/*.tmp
+game/screenshot_*.png
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tools (Godot executables, too large for git)
+tools/
+
+# Old server (deprecated)
+server/
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+*.swp
