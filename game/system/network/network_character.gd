@@ -8,8 +8,20 @@ const CLUB_RESOURCE := preload("res://content/weapon/club/club.tres")
 const PLAYER_TEAM := preload("res://content/team/player_team.tres")
 
 var peer_id := 1
-var player_name := "Player"
-var character_key := "Knight"
+var player_name := "Player":
+	set(v):
+		player_name = v
+		if is_inside_tree():
+			var lbl = get_node_or_null("NameLabel")
+			if lbl:
+				lbl.text = player_name
+var character_key := "Knight":
+	set(v):
+		character_key = v
+		if is_inside_tree() and sprite:
+			var p = CHARACTERS_PATH + character_key + "/SpriteSheet.png"
+			if ResourceLoader.exists(p):
+				sprite.texture = load(p)
 
 @onready var sync: MultiplayerSynchronizer = $MultiplayerSynchronizer
 @onready var name_label: Label = $NameLabel

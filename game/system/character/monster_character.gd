@@ -65,6 +65,7 @@ func _ready():
 	hp = max_hp
 	home_position = global_position
 	add_to_group("monster")
+
 	# Only collide with walls, not players
 	set_collision_mask_value(2, false)
 	# SFX
@@ -438,6 +439,10 @@ func _spawn_companion(captor:Node2D):
 	get_tree().current_scene.add_child(comp)
 	if sprite and sprite.texture:
 		comp.sprite.texture = sprite.texture
+	# Notify other players via NetworkManager (reliable global node)
+	if multiplayer.has_multiplayer_peer():
+		var captor_name = captor.name if captor else ""
+		NetworkManager.sync_companion.rpc(captor_name, monster_key)
 
 
 func _show_floating_text(text:String, color:Color):
