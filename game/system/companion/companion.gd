@@ -28,24 +28,36 @@ func _ready():
 	add_to_group("companion")
 	collision_layer = 0
 	collision_mask = 0
+	# Don't attack immediately after spawn
+	attack_cooldown = 2.0
+
+
+func _is_my_companion() -> bool:
+	# Only the owning player runs attack AI
+	if !multiplayer.has_multiplayer_peer():
+		return true  # single-player
+	if !target or !target is NetworkCharacter:
+		return true
+	return target.peer_id == multiplayer.get_unique_id()
 
 
 func _physics_process(delta):
 	if attack_cooldown > 0:
 		attack_cooldown -= delta
 
-	# Attack logic
-	if is_attacking:
-		_process_attack(delta)
-		move_and_slide()
-		return
-
-	# Find enemy to attack
-	if attack_cooldown <= 0:
-		_find_attack_target()
-		if attack_target:
-			_start_attack()
+	# Attack logic — only on owning client
+	if _is_my_companion():
+		if is_attacking:
+			_process_attack(delta)
+			move_and_slide()
 			return
+
+		# Find enemy to attack
+		if attack_cooldown <= 0:
+			_find_attack_target()
+			if attack_target:
+				_start_attack()
+				return
 
 	# Follow player
 	if !target or !target.is_inside_tree():
@@ -109,7 +121,8 @@ func _process_attack(delta):
 		if attack_target and is_instance_valid(attack_target) and attack_target.is_inside_tree():
 			var dir = pre_attack_pos.direction_to(attack_target.global_position)
 			velocity = dir * speed * 0.75
-			_update_dir(dir)
+			if sprite:
+					sprite.direction = dir
 			# Deal damage at mid-point of lunge
 			if attack_timer > 0.25:
 				if attack_target.has_method("_on_damage_received"):
@@ -143,14 +156,7 @@ func _update_anim():
 	if !sprite:
 		return
 	if velocity.length() > 5:
-		sprite.frame_coords.y = int(fmod(Time.get_ticks_msec() / 150.0, 4))
-		_update_dir(velocity.normalized())
+		sprite.direction = velocity.normalized()
+		sprite.anim = 1  # MOVING
 	else:
-		sprite.frame_coords.y = 0
-
-
-func _update_dir(dir:Vector2):
-	var deg = rad_to_deg(dir.angle())
-	var angle_int = wrapi(roundi(deg / 90.0), 0, 4)
-	var dir_map = [0, 3, 2, 1]
-	sprite.frame_coords.x = dir_map[angle_int]
+		sprite.anim = 0  # IDLE

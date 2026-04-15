@@ -1,9 +1,10 @@
 extends Node
 
 
-var current_scene: Node
+var world: Node
+var overlay: Node
+var overlay_layer: CanvasLayer
 
-var title_screen_scene = preload("res://content/menu/title_screen.tscn")
 var login_screen_scene = preload("res://content/menu/login_screen.tscn")
 var character_select_scene = preload("res://content/menu/character_select.tscn")
 var world_scene = preload("res://world.tscn")
@@ -11,25 +12,48 @@ var world_scene = preload("res://world.tscn")
 
 func _ready() -> void:
 	add_to_group("main")
+
+	# Always load world first — spawner must be in scene tree before peers connect
+	world = world_scene.instantiate()
+	add_child(world)
+
+	# Persistent overlay layer for login/character select UI
+	overlay_layer = CanvasLayer.new()
+	overlay_layer.layer = 10
+	overlay_layer.name = "OverlayLayer"
+	add_child(overlay_layer)
+
 	if "--server" in OS.get_cmdline_user_args():
-		# Dedicated server mode: no UI, just host and run world
 		_start_dedicated_server()
 	elif "--auto-skip" in OS.get_cmdline_user_args():
 		get_tree().create_timer(0.5).timeout.connect(_auto_enter_world)
 	else:
-		_show_scene(login_screen_scene)
+		# Hide world visuals during login (including CanvasLayers)
+		_set_world_visible(false)
+		_show_overlay(login_screen_scene)
 
 
-func _show_scene(packed_scene: PackedScene):
-	if current_scene:
-		current_scene.queue_free()
-	current_scene = packed_scene.instantiate()
-	add_child(current_scene)
+func _show_overlay(packed_scene: PackedScene):
+	# Remove old overlay content
+	if overlay:
+		overlay.queue_free()
+		overlay = null
 
-	if current_scene.has_signal("login_completed"):
-		current_scene.login_completed.connect(_on_login_completed)
-	if current_scene.has_signal("character_created"):
-		current_scene.character_created.connect(_on_character_created)
+	overlay = packed_scene.instantiate()
+	overlay_layer.add_child(overlay)
+	overlay_layer.visible = true
+
+	if overlay.has_signal("login_completed"):
+		overlay.login_completed.connect(_on_login_completed)
+	if overlay.has_signal("character_created"):
+		overlay.character_created.connect(_on_character_created)
+
+
+func _remove_overlay():
+	if overlay:
+		overlay.queue_free()
+		overlay = null
+	overlay_layer.visible = false
 
 
 func _unhandled_input(_event):
@@ -38,7 +62,7 @@ func _unhandled_input(_event):
 
 func _on_login_completed():
 	# No character found → show character creation
-	_show_scene(character_select_scene)
+	_show_overlay(character_select_scene)
 
 
 func _on_character_created(player_name: String, character_name: String):
@@ -66,7 +90,7 @@ func _start_dedicated_server():
 	print("[Server] Starting dedicated server...")
 	NetworkManager.is_dedicated_server = true
 	NetworkManager.host_game()
-	enter_world()
+	world.setup_multiplayer()
 	print("[Server] World loaded, waiting for players on port %d" % NetworkManager.PORT)
 
 
@@ -81,8 +105,28 @@ func _auto_enter_world():
 	# Wait for connection before entering world
 	if !multiplayer.is_server():
 		await NetworkManager.connection_succeeded
-	enter_world()
+	world.setup_multiplayer()
+
+
+func _set_world_visible(v: bool):
+	world.visible = v
+	world.set_process(v)
+	# CanvasLayers don't respect parent visibility — toggle them manually
+	for child in world.get_children():
+		if child is CanvasLayer:
+			child.visible = v
 
 
 func enter_world():
-	_show_scene(world_scene)
+	_remove_overlay()
+	_set_world_visible(true)
+	# Start with black screen, fade out after player spawns
+	var transition = world.get_node_or_null("ScreenFxLayer/Transition")
+	if transition:
+		transition.modulate.a = 1.0
+	world.setup_multiplayer()
+	# Fade out after player is ready (delay for spawn)
+	get_tree().create_timer(2.5).timeout.connect(func():
+		if transition:
+			transition.play(Transition.Type.FADE_OUT)
+	)

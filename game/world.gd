@@ -58,6 +58,8 @@ func _enter_tree():
 		spawner.spawn_function = _spawn_player_func
 
 
+var _multiplayer_setup_done := false
+
 func _ready():
 	var is_server = NetworkManager.is_dedicated_server
 
@@ -82,7 +84,16 @@ func _ready():
 	# Spawn monsters
 	_spawn_monsters()
 
-	# Multiplayer: connect signals
+	# Note: multiplayer setup is deferred to setup_multiplayer()
+	# called by main.gd after connection is established.
+	# This ensures the spawner is in the scene tree before peers connect.
+
+
+func setup_multiplayer():
+	if _multiplayer_setup_done:
+		return
+	_multiplayer_setup_done = true
+
 	if multiplayer.has_multiplayer_peer():
 		NetworkManager.player_connected.connect(_on_player_connected)
 		NetworkManager.player_disconnected.connect(_on_player_disconnected)
@@ -90,17 +101,19 @@ func _ready():
 
 		var my_id = multiplayer.get_unique_id()
 		NetworkManager.players[my_id] = NetworkManager.my_info.duplicate()
+		NetworkManager.flog("[World] setup_multiplayer: my_id=%d is_server=%s players=%s" % [my_id, str(multiplayer.is_server()), str(NetworkManager.players.keys())])
 
 		if multiplayer.is_server():
 			# Server: spawn any already connected peers
 			var spawner = player_container.get_node("PlayerSpawner")
 			for pid in NetworkManager.players:
 				if pid != 1:
-					spawner.spawn(pid)
+					var pinfo = NetworkManager.players.get(pid, {})
+					spawner.spawn({"peer_id": pid, "name": pinfo.get("name", "Player"), "character": pinfo.get("character", "Knight")})
 		else:
-			# Client: wait a frame then tell server we're ready
+			# Client: wait then tell server we're ready
 			get_tree().create_timer(1.5).timeout.connect(func():
-				print("[World] Client sending _request_spawn, my_id=%d" % multiplayer.get_unique_id())
+				NetworkManager.flog("[World] Client sending _request_spawn, my_id=%d" % multiplayer.get_unique_id())
 				_request_spawn.rpc_id(1)
 			)
 	else:
@@ -127,15 +140,28 @@ var _pending_local_setup := false
 
 func _spawn_player_func(data) -> Node:
 	# Called on ALL peers by MultiplayerSpawner
-	var peer_id = int(data)
-	var info = NetworkManager.players.get(peer_id, NetworkManager.my_info)
+	# data is a Dictionary: { "peer_id":int, "name":String, "character":String }
+	var peer_id: int
+	var pname: String
+	var char_key: String
+	if data is Dictionary:
+		peer_id = int(data.get("peer_id", 0))
+		pname = data.get("name", "Player")
+		char_key = data.get("character", "Knight")
+	else:
+		# Fallback for old-style int data
+		peer_id = int(data)
+		var info = NetworkManager.players.get(peer_id, NetworkManager.my_info)
+		pname = info.get("name", "Player")
+		char_key = info.get("character", "Knight")
+
 	var character = network_character_scene.instantiate()
 	character.peer_id = peer_id
-	character.player_name = info.get("name", "Player")
-	character.character_key = info.get("character", "Knight")
+	character.player_name = pname
+	character.character_key = char_key
 	character.name = "Player_%d" % peer_id
 	character.position = Vector2(56, 53)
-	print("[World] Spawned Player_%d (%s) is_me=%s" % [peer_id, character.character_key, str(peer_id == multiplayer.get_unique_id())])
+	NetworkManager.flog("[World] _spawn_player_func: peer=%d char=%s is_me=%s" % [peer_id, char_key, str(peer_id == multiplayer.get_unique_id())])
 	if peer_id == multiplayer.get_unique_id():
 		_pending_local_setup = true
 	return character
@@ -156,13 +182,14 @@ func _request_spawn():
 	if !multiplayer.is_server():
 		return
 	var sender = multiplayer.get_remote_sender_id()
-	print("[World] Server received _request_spawn from peer %d" % sender)
+	NetworkManager.flog("[World] Server received _request_spawn from peer %d" % sender)
 	if player_container.has_node("Player_%d" % sender):
-		print("[World] Player_%d already exists, skipping" % sender)
+		NetworkManager.flog("[World] Player_%d already exists, skipping" % sender)
 		return
 	var spawner = player_container.get_node("PlayerSpawner")
-	print("[World] Server spawning Player_%d via spawner" % sender)
-	spawner.spawn(sender)
+	var info = NetworkManager.players.get(sender, {})
+	NetworkManager.flog("[World] Server spawning Player_%d via spawner, char=%s" % [sender, info.get("character", "?")])
+	spawner.spawn({"peer_id": sender, "name": info.get("name", "Player"), "character": info.get("character", "Knight")})
 
 
 func _on_player_connected(peer_id: int):
