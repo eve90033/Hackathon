@@ -27,9 +27,13 @@ var character_key := "Knight":
 @onready var name_label: Label = $NameLabel
 
 
+func _enter_tree():
+	# Must set authority in _enter_tree, not _ready (MultiplayerSpawner requirement)
+	if peer_id > 0:
+		set_multiplayer_authority(peer_id)
+
+
 func _ready():
-	# Set multiplayer authority
-	set_multiplayer_authority(peer_id)
 
 	# Apply character skin
 	var sprite_path = CHARACTERS_PATH + character_key + "/SpriteSheet.png"
