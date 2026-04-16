@@ -196,15 +196,21 @@ func disconnect_from_game():
 
 @rpc("any_peer", "call_remote", "reliable")
 func sync_companion(captor_name:String, m_key:String):
+	flog("[Companion] sync_companion received! captor=%s monster=%s my_id=%d" % [captor_name, m_key, multiplayer.get_unique_id()])
 	# Find World node (child of Main)
 	var main = get_tree().current_scene
 	if !main:
+		flog("[Companion] ERROR: no current_scene!")
 		return
 	var world = main.get_node_or_null("World")
 	if !world:
 		world = main  # fallback for single-player
 	var captor = world.get_node_or_null("PlayerContainer/" + captor_name)
 	if !captor:
+		flog("[Companion] ERROR: captor not found at PlayerContainer/%s" % captor_name)
+		# Try direct search
+		for p in world.get_node("PlayerContainer").get_children():
+			flog("[Companion]   child: %s" % p.name)
 		return
 	# Remove old companion
 	for old in get_tree().get_nodes_in_group("companion"):
@@ -217,13 +223,15 @@ func sync_companion(captor_name:String, m_key:String):
 	comp.target = captor
 	comp.monster_key = m_key
 	world.add_child(comp)
-	# Load texture
-	var clean_key = m_key.rstrip("0123456789")
-	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % clean_key
+	# Load texture — try exact key first, then fallback without trailing digits
+	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % m_key
 	if !ResourceLoader.exists(tex_path):
-		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key]
+		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [m_key, m_key]
 	if !ResourceLoader.exists(tex_path):
-		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key.to_lower()]
+		var clean_key = m_key.rstrip("0123456789")
+		tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % clean_key
+		if !ResourceLoader.exists(tex_path):
+			tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key]
 	if ResourceLoader.exists(tex_path):
 		comp.sprite.texture = load(tex_path)
 

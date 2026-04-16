@@ -643,6 +643,7 @@ func _spawn_companion(captor:Node2D):
 	# Notify other players via NetworkManager (reliable global node)
 	if multiplayer.has_multiplayer_peer():
 		var captor_name = captor.name if captor else ""
+		NetworkManager.flog("[Companion] _spawn_companion: captor=%s monster=%s sending rpc" % [captor_name, monster_key])
 		NetworkManager.sync_companion.rpc(captor_name, monster_key)
 
 

@@ -37,6 +37,7 @@ func damage(damage_value = -1):
 		return
 	if damage_value == -1:
 		kill()
+		damaged.emit()
 		return
 	life -= damage_value
 	if life <= 0:

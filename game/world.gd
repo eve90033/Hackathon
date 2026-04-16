@@ -161,6 +161,7 @@ func _spawn_player_func(data) -> Node:
 	character.character_key = char_key
 	character.name = "Player_%d" % peer_id
 	character.position = Vector2(56, 53)
+	character.spawn_position = Vector2(56, 53)
 	NetworkManager.flog("[World] _spawn_player_func: peer=%d char=%s is_me=%s" % [peer_id, char_key, str(peer_id == multiplayer.get_unique_id())])
 	if peer_id == multiplayer.get_unique_id():
 		_pending_local_setup = true
@@ -418,9 +419,11 @@ func _process(_delta):
 			companion_face_icon.queue_free()
 			companion_face_icon = null
 		if companion_face_key != "":
-			# Strip trailing digits: "Slime2" -> "Slime"
-			var clean_key = companion_face_key.rstrip("0123456789")
-			var fp = "res://assets/Actor/Monster/%s/Faceset.png" % clean_key
+			# Try exact key first, then fallback without trailing digits
+			var fp = "res://assets/Actor/Monster/%s/Faceset.png" % companion_face_key
+			if !ResourceLoader.exists(fp):
+				var clean_key = companion_face_key.rstrip("0123456789")
+				fp = "res://assets/Actor/Monster/%s/Faceset.png" % clean_key
 			if ResourceLoader.exists(fp):
 				var tr = TextureRect.new()
 				tr.texture = load(fp)
@@ -490,13 +493,15 @@ func _restore_companion(owner:Node2D, monster_key:String):
 	comp.target = owner
 	comp.monster_key = monster_key
 	add_child(comp)
-	# Find sprite texture
-	var clean_key = monster_key.rstrip("0123456789")
-	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % clean_key
+	# Find sprite texture — try exact key first, then fallback without trailing digits
+	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % monster_key
 	if !ResourceLoader.exists(tex_path):
-		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key]
+		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [monster_key, monster_key]
 	if !ResourceLoader.exists(tex_path):
-		tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key.to_lower()]
+		var clean_key = monster_key.rstrip("0123456789")
+		tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % clean_key
+		if !ResourceLoader.exists(tex_path):
+			tex_path = "res://assets/Actor/Monster/%s/%s.png" % [clean_key, clean_key]
 	if ResourceLoader.exists(tex_path):
 		comp.sprite.texture = load(tex_path)
 
