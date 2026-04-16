@@ -189,13 +189,55 @@ func is_host() -> bool:
 	return multiplayer.is_server()
 
 
+@rpc("any_peer", "reliable")
+func check_name(pname: String, char_key: String):
+	## Server 端檢查暱稱唯一性（資料庫 + 在線玩家）
+	if !multiplayer.is_server():
+		return
+	var sender = multiplayer.get_remote_sender_id()
+	# 找出發送者的 user_id
+	var sender_uid = players.get(sender, {}).get("user_id", "")
+	var taken := false
+	# 1. 檢查資料庫（所有註冊過的玩家）
+	for uid in player_database:
+		var data = player_database[uid]
+		if data.get("name", "") == pname and uid != sender_uid:
+			taken = true
+			break
+	# 2. 也檢查目前在線玩家（可能尚未存檔）
+	if !taken:
+		for pid in players:
+			if pid != sender and players[pid].get("name", "") == pname:
+				taken = true
+				break
+	if taken:
+		_name_check_response.rpc_id(sender, false, "此暱稱已被使用！")
+	else:
+		_name_check_response.rpc_id(sender, true, "")
+
+
+@rpc("authority", "reliable")
+func _name_check_response(ok: bool, reason: String):
+	## Client 端收到暱稱檢查結果
+	var main = get_tree().current_scene
+	if !main:
+		return
+	var overlay_layer = main.get_node_or_null("OverlayLayer")
+	if !overlay_layer:
+		return
+	for child in overlay_layer.get_children():
+		if child.has_method("_on_name_check_result"):
+			child._on_name_check_result(ok, reason)
+			break
+
+
 func disconnect_from_game():
 	multiplayer.multiplayer_peer = null
 	players.clear()
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func sync_companion(captor_name:String, m_key:String):
+func sync_companion(captor_name:String, m_key:String, m_tier:int = 0):
 	flog("[Companion] sync_companion received! captor=%s monster=%s my_id=%d" % [captor_name, m_key, multiplayer.get_unique_id()])
 	# Find World node (child of Main)
 	var main = get_tree().current_scene
@@ -212,9 +254,19 @@ func sync_companion(captor_name:String, m_key:String):
 		for p in world.get_node("PlayerContainer").get_children():
 			flog("[Companion]   child: %s" % p.name)
 		return
-	# Remove old companion
+	# Remove old companion (notify escape on local client)
 	for old in get_tree().get_nodes_in_group("companion"):
 		if old.target == captor:
+			# 只在擁有者的 client 顯示逃走通知
+			if captor is NetworkCharacter and captor.peer_id == multiplayer.get_unique_id():
+				var old_cn = old.monster_key
+				var world_ref = get_tree().root.find_child("World", true, false)
+				if world_ref and world_ref.get("MONSTER_NAMES"):
+					old_cn = world_ref.MONSTER_NAMES.get(old.monster_key, old.monster_key)
+				var ui = get_node_or_null("/root/UIManager")
+				if ui:
+					var old_face = "res://assets/Actor/Monster/%s/Faceset.png" % old.monster_key
+					ui.push_notify("%s 逃走了！" % old_cn, Color(1.0, 0.5, 0.3), 3.0, old_face)
 			old.queue_free()
 	# Spawn new
 	var comp_scene = preload("res://system/companion/companion.tscn")
@@ -222,6 +274,7 @@ func sync_companion(captor_name:String, m_key:String):
 	comp.global_position = captor.global_position + Vector2(16, 16)
 	comp.target = captor
 	comp.monster_key = m_key
+	comp.monster_tier = m_tier
 	world.add_child(comp)
 	# Load texture — try exact key first, then fallback without trailing digits
 	var tex_path = "res://assets/Actor/Monster/%s/SpriteSheet.png" % m_key

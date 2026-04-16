@@ -43,6 +43,7 @@ var wander_timer := 0.0
 var wander_duration := 0.0
 var home_position := Vector2.ZERO
 var wander_range := 30.0
+var wander_disabled := false  # 外部 AI 接管時停止漫步
 
 
 @onready var sprite: Sprite2D = $Sprite
@@ -84,13 +85,16 @@ func _process(delta: float) -> void:
 
 	# Server 跑 AI 邏輯，client 只渲染同步的位置
 	if _is_server():
-		wander_timer += delta
-		if wander_timer >= wander_duration:
-			wander_timer = 0.0
-			_pick_new_wander()
-		if global_position.distance_to(home_position) > wander_range:
-			move_vector = (home_position - global_position).normalized()
+		# 漫步 AI（可被外部停用）
+		if !wander_disabled:
+			wander_timer += delta
+			if wander_timer >= wander_duration:
+				wander_timer = 0.0
+				_pick_new_wander()
+			if global_position.distance_to(home_position) > wander_range:
+				move_vector = (home_position - global_position).normalized()
 
+		# 移動執行（始終運行）
 		if move_vector.length():
 			if move_vector.x != 0:
 				sprite.flip_h = move_vector.x < 0

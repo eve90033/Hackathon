@@ -27,7 +27,8 @@ const TIER_BORDER_COLORS := [
 
 const TIER_NAMES := ["安全地帶", "警戒區域", "危險地帶"]
 
-var label_nodes: Array[Label] = []
+var _screen_labels: Array[Node2D] = []
+const _SL = preload("res://system/ui/screen_label.gd")
 
 
 func _ready():
@@ -35,21 +36,16 @@ func _ready():
 	position = SPAWN_CENTER
 	z_index = -10  # 在地面下方
 
-	# 建立區域名稱標籤
+	# 建立區域名稱標籤（用 ScreenLabel 螢幕空間渲染）
 	for i in TIER_NAMES.size():
-		var lbl = Label.new()
-		lbl.text = TIER_NAMES[i]
-		lbl.add_theme_font_size_override("font_size", 7)
-		lbl.add_theme_color_override("font_color", TIER_BORDER_COLORS[i] * Color(1,1,1,2))
-		lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
-		lbl.add_theme_constant_override("shadow_offset_x", 1)
-		lbl.add_theme_constant_override("shadow_offset_y", 1)
-		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		# 放在圓環邊界上方（北側）
+		var color = TIER_BORDER_COLORS[i] * Color(1,1,1,2)
 		var radius = TIER_BOUNDARIES[i] if i < TIER_BOUNDARIES.size() else TIER_BOUNDARIES[-1] + 160.0
-		lbl.position = Vector2(-24, -radius - 10)
-		add_child(lbl)
-		label_nodes.append(lbl)
+		# 用一個 Marker 節點固定世界座標，ScreenLabel 追蹤它
+		var marker = Node2D.new()
+		marker.position = Vector2(0, -radius - 10)
+		add_child(marker)
+		var sl = _SL.create(marker, TIER_NAMES[i], 14, color, Vector2.ZERO)
+		_screen_labels.append(sl)
 
 
 func _draw():

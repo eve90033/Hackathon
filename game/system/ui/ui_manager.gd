@@ -37,9 +37,9 @@ func _build_notify_ui():
 	_notify_panel.anchor_left = 0.5
 	_notify_panel.anchor_right = 0.5
 	_notify_panel.anchor_top = 0.0
-	_notify_panel.offset_left = -60
-	_notify_panel.offset_right = 60
-	_notify_panel.offset_top = 4
+	_notify_panel.offset_left = -120
+	_notify_panel.offset_right = 120
+	_notify_panel.offset_top = 8
 	_notify_panel.visible = false
 	_notify_panel.z_index = 10
 
@@ -60,14 +60,15 @@ func _build_notify_ui():
 	_notify_panel.add_child(hbox)
 
 	_notify_icon = TextureRect.new()
-	_notify_icon.custom_minimum_size = Vector2(10, 10)
+	_notify_icon.custom_minimum_size = Vector2(20, 20)
 	_notify_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_notify_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_notify_icon.visible = false
 	hbox.add_child(_notify_icon)
 
 	_notify_label = Label.new()
-	_notify_label.add_theme_font_size_override("font_size", 7)
+	_notify_label.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_notify_label.add_theme_font_size_override("font_size", 14)
 	_notify_label.add_theme_color_override("font_color", Color.WHITE)
 	_notify_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hbox.add_child(_notify_label)
@@ -130,9 +131,9 @@ func _try_show_next_notify():
 	# 動畫：從上滑入 → 停留 → 向上滑出
 	_notify_panel.visible = true
 	_notify_panel.modulate.a = 0.0
-	_notify_panel.offset_top = -10
+	_notify_panel.offset_top = -20
 	var tw = create_tween()
-	tw.tween_property(_notify_panel, "offset_top", 4.0, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_notify_panel, "offset_top", 8.0, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.set_parallel(true)
 	tw.tween_property(_notify_panel, "modulate:a", 1.0, 0.2)
 	tw.set_parallel(false)

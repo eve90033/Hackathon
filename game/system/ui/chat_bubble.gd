@@ -1,39 +1,64 @@
 extends Node2D
 class_name ChatBubble
 
-## 聊天氣泡：顯示在角色頭上，3 秒後淡出
+## 聊天氣泡：用 CanvasLayer 在螢幕空間渲染，圓角底板
 
-var label: Label
-var bg: ColorRect
+var _canvas: CanvasLayer
+var _panel: Control
+var _label: Label
+var _bg: PanelContainer
+var _character: Node2D
 
 
 func show_message(text: String):
-	# 半透明黑底背景
-	bg = ColorRect.new()
-	bg.color = Color(0, 0, 0, 0.6)
-	bg.position = Vector2(-30, -32)
-	bg.size = Vector2(60, 14)
-	add_child(bg)
+	_character = get_parent()
+
+	_canvas = CanvasLayer.new()
+	_canvas.layer = 6
+	add_child(_canvas)
+
+	_panel = Control.new()
+	_canvas.add_child(_panel)
+
+	# 圓角半透明底板
+	_bg = PanelContainer.new()
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0.65)
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_left = 6
+	style.corner_radius_bottom_right = 6
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	_bg.add_theme_stylebox_override("panel", style)
+	_panel.add_child(_bg)
 
 	# 白色文字
-	label = Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", 6)
-	label.add_theme_color_override("font_color", Color.WHITE)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.position = Vector2(-30, -33)
-	label.size = Vector2(60, 14)
-	add_child(label)
+	_label = Label.new()
+	_label.text = text
+	_label.add_theme_font_size_override("font_size", 14)
+	_label.add_theme_color_override("font_color", Color.WHITE)
+	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_bg.add_child(_label)
 
-	# 根據文字長度調整背景寬度
-	var text_width = max(text.length() * 5, 30)
-	bg.position.x = -text_width / 2
-	bg.size.x = text_width
-	label.position.x = -text_width / 2
-	label.size.x = text_width
-
-	# 2.5 秒後淡出 0.5 秒，然後移除
+	# 2.5 秒後淡出
 	var tween = create_tween()
 	tween.tween_interval(2.5)
-	tween.tween_property(self, "modulate:a", 0.0, 0.5)
+	tween.tween_property(_panel, "modulate:a", 0.0, 0.5)
 	tween.tween_callback(queue_free)
+
+
+func _process(_delta):
+	if !_panel or !_character or !is_inside_tree():
+		return
+	var vp = get_viewport()
+	if !vp:
+		return
+	var canvas_transform = vp.get_canvas_transform()
+	var screen_pos = canvas_transform * (_character.global_position + Vector2(0, -20))
+
+	# 等 PanelContainer 計算完大小後定位
+	var w = _bg.size.x if _bg.size.x > 0 else 100
+	_bg.position = Vector2(screen_pos.x - w / 2.0, screen_pos.y - 36)

@@ -6,7 +6,7 @@ class_name WeaponRack
 @export var weapon_resource: ResourceWeapon
 var interaction_area: Area2D
 var sprite: Sprite2D
-var label: Label
+var _screen_label: Node2D
 
 func _ready():
 	add_to_group("weapon_rack")
@@ -32,17 +32,10 @@ func _ready():
 	sprite.position = Vector2(0, -8)
 	add_child(sprite)
 
-	# 提示文字
-	label = Label.new()
-	label.text = "按 Z 拿取"
-	label.add_theme_font_size_override("font_size", 6)
-	label.add_theme_color_override("font_color", Color.WHITE)
-	label.add_theme_color_override("font_shadow_color", Color.BLACK)
-	label.add_theme_constant_override("shadow_offset_x", 1)
-	label.add_theme_constant_override("shadow_offset_y", 1)
-	label.position = Vector2(-16, -20)
-	label.visible = false
-	add_child(label)
+	# 提示文字（用 ScreenLabel 在螢幕空間渲染）
+	_screen_label = preload("res://system/ui/screen_label.gd").create(
+		self, "按 Z 拿取", 14, Color.WHITE, Vector2(0, -20))
+	_screen_label.set_label_visible(false)
 
 
 func _process(_delta):
@@ -56,7 +49,8 @@ func _process(_delta):
 				continue
 			player_nearby = true
 			break
-	label.visible = player_nearby
+	if _screen_label:
+		_screen_label.set_label_visible(player_nearby)
 
 
 ## 交換武器：將玩家當前武器與架上武器互換

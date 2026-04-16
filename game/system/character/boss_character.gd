@@ -63,6 +63,7 @@ var sfx_jump: AudioStreamPlayer
 
 # Boss 名稱標籤
 var name_label: Label
+var _boss_name_sl: Node2D
 
 # Boss 頭上血條
 var hp_bar_bg: ColorRect
@@ -132,19 +133,9 @@ func _ready():
 		else:
 			detection_area.monitoring = false
 
-	# Boss 名稱標籤（常駐顯示）
-	name_label = Label.new()
-	name_label.text = "Giant Frog"
-	name_label.add_theme_font_size_override("font_size", 5)
-	name_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
-	name_label.add_theme_color_override("font_shadow_color", Color.BLACK)
-	name_label.add_theme_constant_override("shadow_offset_x", 1)
-	name_label.add_theme_constant_override("shadow_offset_y", 1)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.position = Vector2(-HP_BAR_WIDTH / 2.0, -50)
-	name_label.size = Vector2(HP_BAR_WIDTH, 10)
-	name_label.visible = true
-	add_child(name_label)
+	# Boss 名稱標籤（ScreenLabel 螢幕空間渲染）
+	_boss_name_sl = preload("res://system/ui/screen_label.gd").create(
+		self, "巨蛙王", 18, Color(1.0, 0.15, 0.1), Vector2(0, -50))
 
 	# Boss 血條（始終顯示在頭上）
 	hp_bar_bg = ColorRect.new()
@@ -176,7 +167,8 @@ func _update_hp_bar():
 	if hp_bar_bg:
 		hp_bar_bg.visible = boss_state != BossState.DEAD
 		hp_bar_fill.visible = boss_state != BossState.DEAD
-		name_label.visible = boss_state != BossState.DEAD
+		if _boss_name_sl:
+			_boss_name_sl.set_label_visible(boss_state != BossState.DEAD)
 
 
 var _prev_boss_state := BossState.IDLE
