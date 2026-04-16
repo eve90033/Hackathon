@@ -251,6 +251,10 @@ func _die():
 		weapon_node.set_damage_active(false)
 		weapon_node.state = Weapon.State.BACK
 	died.emit()
+	if is_multiplayer_authority():
+		var ui = get_node_or_null("/root/UIManager")
+		if ui:
+			ui.set_layer_active(ui.Priority.DEATH, true)
 	# 死亡遺失同伴
 	for comp in get_tree().get_nodes_in_group("companion"):
 		if comp.target == self:
@@ -312,6 +316,10 @@ func _respawn():
 	if spawn_position != Vector2.ZERO:
 		global_position = spawn_position
 	_start_invincibility(2.0)  # 2s invincibility after respawn
+	if is_multiplayer_authority():
+		var ui = get_node_or_null("/root/UIManager")
+		if ui:
+			ui.set_layer_active(ui.Priority.DEATH, false)
 
 
 func _start_invincibility(duration:=INVINCIBLE_DURATION):
@@ -387,6 +395,10 @@ func _show_levelup_fx():
 	label_tween.tween_property(lvl_label, "modulate:a", 0.0, 1.0)
 	label_tween.set_parallel(false)
 	label_tween.tween_callback(lvl_label.queue_free)
+	# UI 通知
+	var ui = get_node_or_null("/root/UIManager")
+	if ui:
+		ui.push_notify("Lv%d  HP+1  ATK↑" % level, Color(1.0, 0.9, 0.2), 2.5)
 
 
 func teleport(target_teleporter:Teleporter,offset_position:Vector2):

@@ -42,7 +42,10 @@ func _ready():
 
 
 func open_chat():
-	## 開啟聊天輸入框
+	## 開啟聊天輸入框（cinema 模式下禁止）
+	var ui = get_node_or_null("/root/UIManager")
+	if ui and ui.is_cinema():
+		return
 	is_open = true
 	visible = true
 	line_edit.text = ""

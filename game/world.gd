@@ -88,6 +88,9 @@ func _ready():
 	# 生成村莊裝飾（動物 + NPC）
 	_spawn_animals()
 	_spawn_npcs()
+	# 怪物分區視覺提示
+	if !is_server:
+		_spawn_zone_indicator()
 
 	# Note: multiplayer setup is deferred to setup_multiplayer()
 	# called by main.gd after connection is established.
@@ -349,6 +352,7 @@ var save_timer := 0.0
 var last_save_xp := 0
 var last_save_level := 0
 var last_save_companion := ""
+var last_save_weapon := "club"
 
 func _process(_delta):
 	if NetworkManager.is_dedicated_server:
@@ -457,12 +461,17 @@ func _auto_save():
 		if node.target == local_player:
 			cur_comp = node.monster_key
 			break
+	# 取得當前武器
+	var cur_weapon := "club"
+	if local_player is NetworkCharacter:
+		cur_weapon = local_player.current_weapon_key
 	# Only save if something changed
-	if local_player.xp == last_save_xp and local_player.level == last_save_level and cur_comp == last_save_companion:
+	if local_player.xp == last_save_xp and local_player.level == last_save_level and cur_comp == last_save_companion and cur_weapon == last_save_weapon:
 		return
 	last_save_xp = local_player.xp
 	last_save_level = local_player.level
 	last_save_companion = cur_comp
+	last_save_weapon = cur_weapon
 	var user_id = NetworkManager.my_info.get("user_id", "")
 	if user_id == "":
 		return
@@ -470,6 +479,7 @@ func _auto_save():
 		"level": local_player.level,
 		"xp": local_player.xp,
 		"companion": cur_comp,
+		"weapon": cur_weapon,
 	}
 	if NetworkManager.is_host():
 		NetworkManager.save_character(user_id, save_data)
@@ -491,6 +501,9 @@ func _load_player_data(character:Character):
 	if character.resource_life and data.has("level"):
 		character.resource_life.max_life = character.HP_PER_LEVEL[character.level - 1]
 		character.resource_life.life = character.resource_life.max_life
+	# Restore weapon
+	if data.has("weapon") and data["weapon"] != "club" and character is NetworkCharacter:
+		character.change_weapon(data["weapon"])
 	# Restore companion
 	if data.has("companion") and data["companion"] != "":
 		_restore_companion(character, data["companion"])
@@ -498,6 +511,7 @@ func _load_player_data(character:Character):
 	last_save_level = character.level
 	last_save_xp = character.xp
 	last_save_companion = data.get("companion", "")
+	last_save_weapon = data.get("weapon", "club")
 	save_timer = 0.0
 
 
@@ -583,7 +597,7 @@ func _spawn_monsters():
 	var spawn_center := Vector2(-31, -129)  # 村莊中心（怪物圍繞此點展開）
 	# 禁止怪物出現的區域
 	var safe_zones := [
-		Rect2(-130, -200, 200, 140),     # 村莊建築區
+		Rect2(-160, -220, 280, 180),     # 村莊建築區（含重生點緩衝）
 		Rect2(580, -730, 160, 120),      # 房間（出生點）區域
 	]
 	var ring_radius := 200.0  # 起始半徑
@@ -710,6 +724,14 @@ func _find_clear_position(pos: Vector2) -> Vector2:
 	# 全部失敗，回傳原始位置
 	print("[Spawn] WARNING: 無法找到空地 pos=%s" % str(pos))
 	return pos
+
+
+func _spawn_zone_indicator():
+	var zone_script = preload("res://system/ui/zone_indicator.gd")
+	var zone = Node2D.new()
+	zone.set_script(zone_script)
+	zone.name = "ZoneIndicator"
+	add_child(zone)
 
 
 func play_transition(type:Transition.Type):

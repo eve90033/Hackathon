@@ -570,9 +570,21 @@ func _respawn():
 	set_deferred("collision_mask", 1)
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0
+	sprite.scale = Vector2(1.0, 1.0)
 	if hitbox:
 		hitbox.monitorable = true
 	target = null
+	# 通知 client 恢復顯示
+	if _is_multiplayer():
+		_rpc_respawn_fx.rpc()
+
+
+@rpc("authority", "reliable")
+func _rpc_respawn_fx():
+	visible = true
+	sprite.modulate = Color.WHITE
+	sprite.modulate.a = 1.0
+	sprite.scale = Vector2(1.0, 1.0)
 
 
 func _valid_target() -> bool:
@@ -694,6 +706,11 @@ func _rpc_capture_success_fx():
 	if sfx_capture_ok:
 		sfx_capture_ok.play()
 	_show_floating_text("收服成功！", Color(0.2, 1.0, 0.3))
+	# UI 通知（只在收服者的 client 端顯示）
+	var ui = get_node_or_null("/root/UIManager")
+	if ui:
+		var face_path = "res://assets/Actor/Monster/%s/Faceset.png" % monster_key
+		ui.push_notify("收服了 %s！" % monster_key, Color(0.3, 1.0, 0.4), 3.0, face_path)
 	var tw = create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
