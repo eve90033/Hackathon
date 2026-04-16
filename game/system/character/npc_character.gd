@@ -25,6 +25,7 @@ var home_position := Vector2.ZERO
 var emote_timer := 0.0
 var emote_interval := 8.0  # 每 8 秒隨機顯示表情
 var emote_node: Sprite2D
+var emote_pool: Array[int] = []  # 自訂表情池（空=全部隨機）
 
 @onready var sprite: SpriteCharacter = $Sprite
 
@@ -105,8 +106,12 @@ func _show_random_emote():
 	if emote_node and is_instance_valid(emote_node):
 		emote_node.queue_free()
 
-	# 表情圖片為 emote1.png ~ emote30.png
-	var pick_num = randi_range(1, 30)
+	# 表情圖片：有自訂池就從池裡選，否則全隨機
+	var pick_num: int
+	if emote_pool.size() > 0:
+		pick_num = emote_pool[randi() % emote_pool.size()]
+	else:
+		pick_num = randi_range(1, 30)
 	var emote_path = "res://assets/Ui/Emote/emote%d.png" % pick_num
 	if !ResourceLoader.exists(emote_path):
 		return

@@ -59,9 +59,11 @@ vframes = 4
 script = ExtResource("2_sm")
 
 [node name="CollisionShape" type="CollisionShape2D" parent="."]
+position = Vector2(0, -4)
 shape = SubResource("CircleShape2D_body")
 
 [node name="Hitbox" type="Area2D" parent="."]
+position = Vector2(0, -4)
 collision_layer = 4
 collision_mask = 0
 monitoring = false
@@ -72,6 +74,7 @@ team = ExtResource("6_enemy")
 shape = SubResource("CircleShape2D_hitbox")
 
 [node name="DamageArea" type="Area2D" parent="."]
+position = Vector2(0, -4)
 collision_layer = 0
 monitorable = false
 script = ExtResource("5_dmg")

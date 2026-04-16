@@ -37,6 +37,33 @@ var local_player:Character
 
 # Monster spawn definitions: [texture_path, position, hp, damage, speed, detection, xp]
 const MONSTER_BASE_PATH := "res://assets/Actor/Monster/"
+# 怪物中文名（寶可夢風格，3~5字，根據實際圖片命名）
+const MONSTER_NAMES := {
+	"Axolot": "火六鰓", "AxolotBlue": "冰六鰓", "Bamboo": "竹筒蟲", "BambooYellow": "金筒蟲",
+	"Bear": "暴怒熊", "Beast": "赤角獸", "Beast2": "翠角獸", "BlueBat": "冰翼蝠",
+	"Butterfly": "焰粉蝶", "ButterflyBlue": "冰晶蝶", "Cyclope": "赤獨眼", "Cyclope2": "翠獨眼",
+	"Dragon": "綠龍仔", "DragonYellow": "橙龍仔", "Eye": "藍浮眼", "Eye2": "赤浮眼",
+	"Fish": "綠泡魚", "FishRed": "赤眼魚", "Flam": "烈焰靈", "Flam2": "寒冰靈",
+	"GoldRacoon": "金浣熊", "GreenOctopus": "翠觸手", "Grey Trex": "骨暴龍",
+	"HeartGreen": "綠咬咬", "HeartRed": "紅咬咬", "KappaGreen": "翠河童", "KappaRed": "赤河童",
+	"LanternGreen": "翠燈怪", "LanternRed": "赤燈怪", "Larva": "花毛蟲", "Larva2": "藍甲蟲",
+	"Lizard": "草蜥蜴", "Lizard2": "岩蜥蜴", "Mole": "赤地鼠", "Mole2": "藍地鼠",
+	"Mollusc": "菇菇龜", "Mollusc2": "花菇龜", "Mouse": "圓耳鼠", "MouseBlack": "黑耳鼠",
+	"Mushroom": "紅蘑菇", "Mushroom2": "藍蘑菇", "Octopus": "綠水母", "Octopus2": "藍水母",
+	"Owl": "火焰鴞", "Owl2": "暗夜鴞", "Panda": "圓眼熊", "Racoon": "赤浣熊",
+	"RedOctopus": "赤觸手", "Reptile": "藍甲龍", "Reptile2": "翠甲龍",
+	"Skull": "赤骷髏", "SkullBlue": "冰骷髏", "Slime": "藍史萊", "Slime2": "綠史萊",
+	"Slime3": "白史萊", "Slime4": "金史萊", "Snake": "赤圓蛇", "Snake2": "橙圓蛇",
+	"Snake3": "翠圓蛇", "Snake4": "紅圓蛇", "SpiderRed": "赤蜘蛛", "SpiderYellow": "金蜘蛛",
+	"Spirit": "藍水滴", "Spirit2": "赤水滴", "TRex": "黃暴龍", "YellowsBat": "金翼蝠",
+}
+
+# 動物中文名
+const ANIMAL_NAMES := {"Cat": "小花貓", "Dog": "忠犬", "Pig": "粉豬豬"}
+
+# NPC 中文名
+const NPC_NAMES := {"Guard": "衛兵", "Elder": "長老"}
+
 const ALL_MONSTERS := [
 	"Axolot", "AxolotBlue", "Bamboo", "BambooYellow", "Bear", "Beast", "Beast2",
 	"BlueBat", "Butterfly", "ButterflyBlue", "Cyclope", "Cyclope2", "Dragon",
@@ -88,6 +115,9 @@ func _ready():
 	# 生成村莊裝飾（動物 + NPC）
 	_spawn_animals()
 	_spawn_npcs()
+	# 怪物分區視覺提示
+	if !is_server:
+		_spawn_zone_indicator()
 
 	# Note: multiplayer setup is deferred to setup_multiplayer()
 	# called by main.gd after connection is established.
@@ -187,6 +217,10 @@ func _setup_local_player(character):
 	if character.resource_life:
 		player_ui.resource_life = character.resource_life
 	_load_player_data(character)
+	_show_tutorial_hints()
+	# 向 server 請求武器架狀態同步
+	if multiplayer.has_multiplayer_peer() and !multiplayer.is_server():
+		_request_rack_sync.rpc_id(1)
 
 
 @rpc("any_peer", "reliable")
@@ -276,25 +310,25 @@ func _setup_hud():
 	hud_node.name = "HUD"
 	player_ui.add_child(hud_node)
 
-	# === Face portrait 16x16 ===
+	# === Face portrait 36x36 ===
 	var face_border = ColorRect.new()
 	face_border.color = Color(0.4, 0.3, 0.2)
-	face_border.position = Vector2(2, 2)
-	face_border.size = Vector2(16, 16)
+	face_border.position = Vector2(6, 6)
+	face_border.size = Vector2(36, 36)
 	hud_node.add_child(face_border)
 
 	# === Bars right of face ===
-	var bx := 22.0
-	var by := 2.0
-	var bar_w := 36.0
-	var bar_h := 3.0
+	var bx := 50.0
+	var by := 6.0
+	var bar_w := 84.0
+	var bar_h := 7.0
 
 	# --- Level label ---
-	level_label = _make_label("Lv1", Vector2(bx, by - 1), Color(1.0, 0.9, 0.5))
+	level_label = _make_label("Lv1", Vector2(bx, by - 2), Color(1.0, 0.9, 0.5))
 	hud_node.add_child(level_label)
 
 	# --- HP Bar ---
-	var hp_y := by + 7
+	var hp_y := by + 16
 
 	hp_bar_bg = ColorRect.new()
 	hp_bar_bg.color = Color(0.15, 0.08, 0.08)
@@ -308,11 +342,11 @@ func _setup_hud():
 	hp_bar.size = Vector2(bar_w, bar_h)
 	hud_node.add_child(hp_bar)
 
-	hp_label = _make_label("", Vector2(bx + bar_w + 2, hp_y - 2), Color.WHITE)
+	hp_label = _make_label("", Vector2(bx + bar_w + 4, hp_y - 4), Color.WHITE)
 	hud_node.add_child(hp_label)
 
 	# --- XP Bar ---
-	var xp_y := hp_y + bar_h + 2
+	var xp_y := hp_y + bar_h + 4
 
 	xp_bar_bg = ColorRect.new()
 	xp_bar_bg.color = Color(0.1, 0.08, 0.02)
@@ -326,7 +360,7 @@ func _setup_hud():
 	xp_bar.size = Vector2(0, bar_h)
 	hud_node.add_child(xp_bar)
 
-	xp_label = _make_label("", Vector2(bx + bar_w + 2, xp_y - 2), Color(1.0, 0.9, 0.5))
+	xp_label = _make_label("", Vector2(bx + bar_w + 4, xp_y - 4), Color(1.0, 0.9, 0.5))
 	hud_node.add_child(xp_label)
 
 
@@ -334,21 +368,29 @@ func _make_label(text:String, pos:Vector2, color:Color) -> Label:
 	var lbl = Label.new()
 	lbl.text = text
 	lbl.position = pos
-	lbl.add_theme_font_size_override("font_size", 6)
+	lbl.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	lbl.add_theme_font_size_override("font_size", 14)
 	lbl.add_theme_color_override("font_color", color)
 	lbl.add_theme_color_override("font_shadow_color", Color.BLACK)
-	lbl.add_theme_constant_override("shadow_offset_x", 1)
-	lbl.add_theme_constant_override("shadow_offset_y", 1)
+	lbl.add_theme_constant_override("shadow_offset_x", 2)
+	lbl.add_theme_constant_override("shadow_offset_y", 2)
 	return lbl
 
 
 var face_loaded := false
 var companion_face_icon:Node
+var companion_face_label:Label
 var companion_face_key := ""
 var save_timer := 0.0
 var last_save_xp := 0
 var last_save_level := 0
 var last_save_companion := ""
+var last_save_weapon := "club"
+
+# 新手引導
+var _tutorial_shown_enter := false
+var _tutorial_shown_attack := false
+var _tutorial_shown_capture := false
 
 func _process(_delta):
 	if NetworkManager.is_dedicated_server:
@@ -385,15 +427,15 @@ func _process(_delta):
 				face_icon.queue_free()
 			var tr = TextureRect.new()
 			tr.texture = load(face_path)
-			tr.position = Vector2(3, 3)
-			# Scale 38px faceset down to ~14px
-			tr.scale = Vector2(0.37, 0.37)
+			tr.position = Vector2(8, 8)
+			# Scale 38px faceset to fill 32px area (inside 36px border)
+			tr.scale = Vector2(0.84, 0.84)
 			tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			hud_node.add_child(tr)
 			face_icon = tr
 			face_loaded = true
 
-	var bar_w := 36.0
+	var bar_w := 84.0
 
 	# Level
 	if level_label:
@@ -401,13 +443,14 @@ func _process(_delta):
 
 	# HP bar
 	if hp_bar and local_player.resource_life:
-		var ratio = local_player.resource_life.life / float(local_player.resource_life.max_life)
+		var display_max = local_player.HP_PER_LEVEL[local_player.level - 1]
+		var ratio = local_player.resource_life.life / float(display_max)
 		hp_bar.size.x = bar_w * ratio
-		hp_label.text = "%d/%d" % [local_player.resource_life.life, local_player.resource_life.max_life]
+		hp_label.text = "%d/%d" % [local_player.resource_life.life, display_max]
 
 	# XP bar
 	if xp_bar:
-		if local_player.level < 4:
+		if local_player.level < 10:
 			var xp_max = local_player.XP_TABLE[local_player.level]
 			var xp_ratio = local_player.xp / float(xp_max) if xp_max > 0 else 1.0
 			xp_bar.size.x = bar_w * min(xp_ratio, 1.0)
@@ -415,6 +458,9 @@ func _process(_delta):
 		else:
 			xp_bar.size.x = bar_w
 			xp_label.text = "MAX"
+
+	# 新手引導檢查
+	_check_tutorial_triggers()
 
 	# Auto-save check + sync peers
 	save_timer += _delta
@@ -433,6 +479,9 @@ func _process(_delta):
 		if companion_face_icon and is_instance_valid(companion_face_icon):
 			companion_face_icon.queue_free()
 			companion_face_icon = null
+		if companion_face_label and is_instance_valid(companion_face_label):
+			companion_face_label.queue_free()
+			companion_face_label = null
 		if companion_face_key != "":
 			# Try exact key first, then fallback without trailing digits
 			var fp = "res://assets/Actor/Monster/%s/Faceset.png" % companion_face_key
@@ -440,13 +489,98 @@ func _process(_delta):
 				var clean_key = companion_face_key.rstrip("0123456789")
 				fp = "res://assets/Actor/Monster/%s/Faceset.png" % clean_key
 			if ResourceLoader.exists(fp):
+				# 同伴頭像（24x24，跟通知頭像差不多大）
 				var tr = TextureRect.new()
 				tr.texture = load(fp)
-				tr.position = Vector2(3, 21)
-				tr.scale = Vector2(0.37, 0.37)
+				tr.position = Vector2(6, 48)
+				tr.custom_minimum_size = Vector2(20, 20)
+				tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 				tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 				hud_node.add_child(tr)
 				companion_face_icon = tr
+				# 同伴中文名
+				var cn_name = MONSTER_NAMES.get(companion_face_key, companion_face_key)
+				var lbl = Label.new()
+				lbl.text = cn_name
+				lbl.add_theme_font_size_override("font_size", 14)
+				lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+				lbl.add_theme_color_override("font_shadow_color", Color.BLACK)
+				lbl.add_theme_constant_override("shadow_offset_x", 1)
+				lbl.add_theme_constant_override("shadow_offset_y", 1)
+				lbl.position = Vector2(50, 48)
+				hud_node.add_child(lbl)
+				companion_face_label = lbl
+
+
+@rpc("any_peer", "reliable")
+func _request_rack_sync():
+	## Server 端：把所有武器架的當前狀態發給請求者
+	if !multiplayer.is_server():
+		return
+	var sender = multiplayer.get_remote_sender_id()
+	var rack_states := {}
+	for rack in get_tree().get_nodes_in_group("weapon_rack"):
+		if rack is WeaponRack:
+			var key = rack._get_weapon_key(rack.weapon_resource)
+			rack_states[rack.name] = key
+	_receive_rack_sync.rpc_id(sender, rack_states)
+
+
+@rpc("authority", "reliable")
+func _receive_rack_sync(states: Dictionary):
+	## Client 端：收到武器架狀態，更新顯示
+	for rack_name in states:
+		var rack = get_tree().root.find_child(rack_name, true, false)
+		if rack and rack is WeaponRack:
+			var weapon_key = states[rack_name]
+			var path = NetworkCharacter.WEAPON_PATHS.get(weapon_key, "")
+			if path != "" and ResourceLoader.exists(path):
+				rack.weapon_resource = load(path)
+				if rack.sprite:
+					rack.sprite.texture = rack.weapon_resource.sprite
+			else:
+				rack.weapon_resource = null
+				if rack.sprite:
+					rack.sprite.texture = null
+
+
+func _show_tutorial_hints():
+	# 首次進入地圖的提示
+	var ui = get_node_or_null("/root/UIManager")
+	if !ui:
+		return
+	# 延遲顯示，等轉場完成
+	get_tree().create_timer(3.0).timeout.connect(func():
+		if ui:
+			ui.push_notify("走出村莊探索世界！", Color(0.8, 0.9, 1.0), 3.0)
+	)
+
+
+func _check_tutorial_triggers():
+	# 在 _process 裡呼叫，檢查一次性提示
+	if !local_player or NetworkManager.is_dedicated_server:
+		return
+	var ui = get_node_or_null("/root/UIManager")
+	if !ui:
+		return
+
+	# 首次靠近怪物
+	if !_tutorial_shown_attack:
+		for m in get_tree().get_nodes_in_group("monster"):
+			if m is MonsterCharacter and m.ai_state != MonsterCharacter.AIState.DEAD:
+				if local_player.global_position.distance_to(m.global_position) < 80:
+					_tutorial_shown_attack = true
+					ui.push_notify("按 Z 攻擊！", Color(1.0, 0.8, 0.3), 2.5)
+					break
+
+	# 首次怪物瀕死（可收服）
+	if !_tutorial_shown_capture and _tutorial_shown_attack:
+		for m in get_tree().get_nodes_in_group("monster"):
+			if m is MonsterCharacter and m.is_capturable:
+				if local_player.global_position.distance_to(m.global_position) < 80:
+					_tutorial_shown_capture = true
+					ui.push_notify("按 C 收服！", Color(0.3, 1.0, 0.5), 3.0)
+					break
 
 
 func _auto_save():
@@ -457,12 +591,17 @@ func _auto_save():
 		if node.target == local_player:
 			cur_comp = node.monster_key
 			break
+	# 取得當前武器
+	var cur_weapon := "club"
+	if local_player is NetworkCharacter:
+		cur_weapon = local_player.current_weapon_key
 	# Only save if something changed
-	if local_player.xp == last_save_xp and local_player.level == last_save_level and cur_comp == last_save_companion:
+	if local_player.xp == last_save_xp and local_player.level == last_save_level and cur_comp == last_save_companion and cur_weapon == last_save_weapon:
 		return
 	last_save_xp = local_player.xp
 	last_save_level = local_player.level
 	last_save_companion = cur_comp
+	last_save_weapon = cur_weapon
 	var user_id = NetworkManager.my_info.get("user_id", "")
 	if user_id == "":
 		return
@@ -470,6 +609,7 @@ func _auto_save():
 		"level": local_player.level,
 		"xp": local_player.xp,
 		"companion": cur_comp,
+		"weapon": cur_weapon,
 	}
 	if NetworkManager.is_host():
 		NetworkManager.save_character(user_id, save_data)
@@ -491,6 +631,9 @@ func _load_player_data(character:Character):
 	if character.resource_life and data.has("level"):
 		character.resource_life.max_life = character.HP_PER_LEVEL[character.level - 1]
 		character.resource_life.life = character.resource_life.max_life
+	# Restore weapon
+	if data.has("weapon") and data["weapon"] != "club" and character is NetworkCharacter:
+		character.change_weapon(data["weapon"])
 	# Restore companion
 	if data.has("companion") and data["companion"] != "":
 		_restore_companion(character, data["companion"])
@@ -498,6 +641,7 @@ func _load_player_data(character:Character):
 	last_save_level = character.level
 	last_save_xp = character.xp
 	last_save_companion = data.get("companion", "")
+	last_save_weapon = data.get("weapon", "club")
 	save_timer = 0.0
 
 
@@ -553,10 +697,16 @@ func _spawn_animals():
 		animal.name = "Animal_" + data["key"]
 		animal.position = data["pos"]
 		add_child(animal)
+		# 動物不顯示名字
 		var sprite_name = data.get("sprite", "SpriteSheet.png")
 		var tex_path = ANIMAL_BASE_PATH + data["key"] + "/" + sprite_name
 		if ResourceLoader.exists(tex_path):
 			animal.sprite.texture = load(tex_path)
+		# Pig 特殊 AI：跟隨玩家 + 愛心表情
+		if data["key"] == "Pig":
+			var pig_ai = Node.new()
+			pig_ai.set_script(preload("res://system/character/pig_ai.gd"))
+			animal.add_child(pig_ai)
 
 
 func _spawn_npcs():
@@ -569,6 +719,11 @@ func _spawn_npcs():
 		# 長老：村莊西北側，小範圍來回
 		{"name": "Elder", "character": "Samurai", "pos": Vector2(-85, -150),
 		 "patrol": [Vector2(-100, -155), Vector2(-70, -145)]},
+		# 楊總統：村莊中央廣場，來回走動，只顯示憤怒表情
+		{"name": "President", "character": "Knight", "pos": Vector2(-31, -145),
+		 "patrol": [Vector2(-60, -145), Vector2(0, -145)],
+		 "display_name": "楊總統", "shout": "賴祥德我是不會屈服的",
+		 "emotes": [3, 4, 10, 15, 21, 22], "emote_interval": 4.0},
 	]
 	for config in npc_configs:
 		var npc = npc_scene.instantiate()
@@ -576,14 +731,45 @@ func _spawn_npcs():
 		npc.position = config["pos"]
 		npc.character_key = config["character"]
 		npc.patrol_points.assign(config["patrol"])
+		if config.has("emotes"):
+			npc.emote_pool.assign(config["emotes"])
+		if config.has("emote_interval"):
+			npc.emote_interval = config["emote_interval"]
 		add_child(npc)
+		# NPC 名字
+		var display = config.get("display_name", NPC_NAMES.get(config["name"], config["name"]))
+		preload("res://system/ui/screen_label.gd").create(npc, display, 14, Color(0.4, 0.8, 1.0), Vector2(0, -18))
+		# 持續喊話
+		if config.has("shout"):
+			_start_npc_shout(npc, config["shout"])
+
+
+func _start_npc_shout(npc: Node2D, text: String):
+	# 每 4 秒用聊天氣泡喊話
+	var timer = Timer.new()
+	timer.wait_time = 4.0
+	timer.autostart = true
+	npc.add_child(timer)
+	timer.timeout.connect(func():
+		if is_instance_valid(npc):
+			var _ChatBubbleScript = preload("res://system/ui/chat_bubble.gd")
+			var bubble = Node2D.new()
+			bubble.set_script(_ChatBubbleScript)
+			npc.add_child(bubble)
+			bubble.show_message(text)
+	)
+	# 第一次立即喊
+	var bubble = Node2D.new()
+	bubble.set_script(preload("res://system/ui/chat_bubble.gd"))
+	npc.add_child(bubble)
+	bubble.show_message(text)
 
 
 func _spawn_monsters():
 	var spawn_center := Vector2(-31, -129)  # 村莊中心（怪物圍繞此點展開）
 	# 禁止怪物出現的區域
 	var safe_zones := [
-		Rect2(-130, -200, 200, 140),     # 村莊建築區
+		Rect2(-160, -220, 280, 180),     # 村莊建築區（含重生點緩衝）
 		Rect2(580, -730, 160, 120),      # 房間（出生點）區域
 	]
 	var ring_radius := 200.0  # 起始半徑
@@ -622,8 +808,15 @@ func _spawn_monsters():
 		monster.xp_value = [10, 25, 50][tier]
 		monster.behavior_type = tier  # 0=BASIC, 1=DASH, 2=FLANK
 		monster.monster_key = key
+		monster.monster_tier = tier
 
 		add_child(monster)
+
+		# 怪物名字標籤
+		var cn_name = MONSTER_NAMES.get(key, key)
+		var name_color = [Color(0.6, 1.0, 0.6), Color(1.0, 0.9, 0.4), Color(1.0, 0.5, 0.4)][tier]
+		var _sl = preload("res://system/ui/screen_label.gd")
+		_sl.create(monster, cn_name, 14, name_color, Vector2(0, -18))
 
 		# Find sprite texture
 		var tex_path = MONSTER_BASE_PATH + key + "/SpriteSheet.png"
@@ -650,28 +843,35 @@ func _spawn_monsters():
 
 
 func _spawn_weapon_racks():
-	var weapons = {
-		"axe": preload("res://content/weapon/axe/axe.tres"),
-		"big_sword": preload("res://content/weapon/big_sword/big_sword.tres"),
-		"bone": preload("res://content/weapon/bone/bone.tres"),
-		"book": preload("res://content/weapon/book/book.tres"),
-	}
-	var positions = [
-		Vector2(-70, -130),   # 村莊內西側
-		Vector2(30, -130),    # 村莊內東側
-		Vector2(-70, -160),   # 村莊內西北
-		Vector2(30, -160),    # 村莊內東北
+	# 武器散布在地圖各地，越強的越遠
+	var rack_configs = [
+		# 弱怪區（村莊附近）— 快速武器
+		{"name": "bone", "res": "res://content/weapon/bone/bone.tres",
+		 "pos": Vector2(-90, -90)},    # 村莊南方出口
+		# 村莊內 — 遠程武器（方便新手試用）
+		{"name": "book0", "res": "res://content/weapon/book/book.tres",
+		 "pos": Vector2(10, -160)},    # 村莊內東北角
+		# 弱怪區（村莊東側）— 遠程武器
+		{"name": "book", "res": "res://content/weapon/book/book.tres",
+		 "pos": Vector2(120, -180)},   # 村莊東側草地
+		# 中怪區 — 大劍
+		{"name": "big_sword", "res": "res://content/weapon/big_sword/big_sword.tres",
+		 "pos": Vector2(-200, -350)},  # 西北方中怪區
+		# 中怪區 — 斧頭（另一側）
+		{"name": "axe", "res": "res://content/weapon/axe/axe.tres",
+		 "pos": Vector2(200, -350)},   # 東北方中怪區
+		# 強怪區 — 額外一把斧頭（靠近 Boss）
+		{"name": "axe2", "res": "res://content/weapon/axe/axe.tres",
+		 "pos": Vector2(-31, -550)},   # Boss 前方
 	]
-	var i := 0
-	for wname in weapons:
+	for config in rack_configs:
 		var rack = StaticBody2D.new()
 		rack.set_script(preload("res://system/weapon/weapon_rack.gd"))
-		rack.name = "WeaponRack_" + wname
-		rack.position = positions[i]
-		rack.weapon_resource = weapons[wname]
+		rack.name = "WeaponRack_" + config["name"]
+		rack.position = config["pos"]
+		rack.weapon_resource = load(config["res"])
 		rack.add_to_group("weapon_rack")
 		add_child(rack)
-		i += 1
 
 
 func _is_position_blocked(tilemap: TileMap, pos: Vector2) -> bool:
@@ -710,6 +910,14 @@ func _find_clear_position(pos: Vector2) -> Vector2:
 	# 全部失敗，回傳原始位置
 	print("[Spawn] WARNING: 無法找到空地 pos=%s" % str(pos))
 	return pos
+
+
+func _spawn_zone_indicator():
+	var zone_script = preload("res://system/ui/zone_indicator.gd")
+	var zone = Node2D.new()
+	zone.set_script(zone_script)
+	zone.name = "ZoneIndicator"
+	add_child(zone)
 
 
 func play_transition(type:Transition.Type):

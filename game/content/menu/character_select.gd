@@ -115,10 +115,59 @@ func _process(delta):
 
 func _on_confirm():
 	var player_name = name_edit.text.strip_edges()
+	# 空名檢查
 	if player_name.is_empty():
 		hint_label.text = "請輸入暱稱！"
 		return
-	character_created.emit(player_name, character_list[selected_index])
+	# 長度限制（2~12字）
+	if player_name.length() < 2:
+		hint_label.text = "暱稱至少 2 個字！"
+		return
+	if player_name.length() > 12:
+		hint_label.text = "暱稱最多 12 個字！"
+		return
+	# 安全性：禁止危險字元
+	var bad_chars = "<>'\"/\\&;{}[]()=`~|!@#$%^*+"
+	for c in player_name:
+		if c in bad_chars:
+			hint_label.text = "暱稱包含不允許的字元"
+			return
+	# 向 server 檢查暱稱唯一性
+	if multiplayer.has_multiplayer_peer() and !multiplayer.is_server():
+		hint_label.text = "檢查暱稱中..."
+		confirm_button.disabled = true
+		NetworkManager.check_name.rpc_id(1, player_name, character_list[selected_index])
+		# 3 秒超時恢復
+		get_tree().create_timer(3.0).timeout.connect(func():
+			if confirm_button.disabled:
+				confirm_button.disabled = false
+				hint_label.text = "連線逾時，請重試"
+		)
+	else:
+		# 單人或 host：本地檢查
+		if _is_name_taken(player_name):
+			hint_label.text = "此暱稱已被使用！"
+			return
+		character_created.emit(player_name, character_list[selected_index])
+
+
+func _is_name_taken(pname: String) -> bool:
+	for uid in NetworkManager.player_database:
+		var data = NetworkManager.player_database[uid]
+		if data.get("name", "") == pname:
+			# 如果是自己的存檔名字，允許
+			if uid == NetworkManager.my_info.get("user_id", ""):
+				continue
+			return true
+	return false
+
+
+func _on_name_check_result(ok: bool, reason: String):
+	confirm_button.disabled = false
+	if ok:
+		character_created.emit(name_edit.text.strip_edges(), character_list[selected_index])
+	else:
+		hint_label.text = reason
 
 
 func _unhandled_input(event):

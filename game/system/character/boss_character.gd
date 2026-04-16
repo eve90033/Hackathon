@@ -63,6 +63,13 @@ var sfx_jump: AudioStreamPlayer
 
 # Boss 名稱標籤
 var name_label: Label
+var _boss_name_sl: Node2D
+
+# Boss 頭上血條
+var hp_bar_bg: ColorRect
+var hp_bar_fill: ColorRect
+const HP_BAR_WIDTH := 40.0
+const HP_BAR_HEIGHT := 3.0
 
 
 func _is_server() -> bool:
@@ -126,18 +133,42 @@ func _ready():
 		else:
 			detection_area.monitoring = false
 
-	# 建立 Boss 名稱標籤（隱藏，入場時顯示）
-	name_label = Label.new()
-	name_label.text = "Giant Frog"
-	name_label.add_theme_font_size_override("font_size", 10)
-	name_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
-	name_label.add_theme_color_override("font_shadow_color", Color.BLACK)
-	name_label.add_theme_constant_override("shadow_offset_x", 1)
-	name_label.add_theme_constant_override("shadow_offset_y", 1)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.position = Vector2(-30, -35)
-	name_label.visible = false
-	add_child(name_label)
+	# Boss 名稱標籤（ScreenLabel 螢幕空間渲染）
+	_boss_name_sl = preload("res://system/ui/screen_label.gd").create(
+		self, "巨蛙王", 18, Color(1.0, 0.15, 0.1), Vector2(0, -50))
+
+	# Boss 血條（始終顯示在頭上）
+	hp_bar_bg = ColorRect.new()
+	hp_bar_bg.color = Color(0.15, 0.08, 0.08, 0.8)
+	hp_bar_bg.position = Vector2(-HP_BAR_WIDTH / 2.0, -42)
+	hp_bar_bg.size = Vector2(HP_BAR_WIDTH, HP_BAR_HEIGHT)
+	add_child(hp_bar_bg)
+
+	hp_bar_fill = ColorRect.new()
+	hp_bar_fill.color = Color(0.9, 0.15, 0.1)
+	hp_bar_fill.position = Vector2(-HP_BAR_WIDTH / 2.0, -42)
+	hp_bar_fill.size = Vector2(HP_BAR_WIDTH, HP_BAR_HEIGHT)
+	add_child(hp_bar_fill)
+
+	_update_hp_bar()
+
+
+func _update_hp_bar():
+	if hp_bar_fill:
+		var ratio = clampf(float(hp) / float(max_hp), 0.0, 1.0)
+		hp_bar_fill.size.x = HP_BAR_WIDTH * ratio
+		# 顏色隨血量變化：綠→黃→紅
+		if ratio > 0.5:
+			hp_bar_fill.color = Color(0.2, 0.85, 0.2)
+		elif ratio > 0.25:
+			hp_bar_fill.color = Color(0.95, 0.8, 0.1)
+		else:
+			hp_bar_fill.color = Color(0.9, 0.15, 0.1)
+	if hp_bar_bg:
+		hp_bar_bg.visible = boss_state != BossState.DEAD
+		hp_bar_fill.visible = boss_state != BossState.DEAD
+		if _boss_name_sl:
+			_boss_name_sl.set_label_visible(boss_state != BossState.DEAD)
 
 
 var _prev_boss_state := BossState.IDLE
@@ -230,6 +261,7 @@ func _process_client(delta: float):
 	_prev_boss_state = boss_state
 	velocity = velocity.move_toward(move_vector * speed * speed_mult, acceleration * delta)
 	move_and_slide()
+	_update_hp_bar()
 
 
 # === AI 狀態處理 ===
@@ -423,52 +455,9 @@ func _rpc_phase2_fx():
 	tw.tween_property(sprite, "modulate", Color.WHITE, 0.1)
 
 
-# === 入場演出 ===
+# === 入場 ===
 func _play_intro():
 	intro_played = true
-	# 顯示 Boss 名稱標籤（從右側滑入）
-	if name_label:
-		name_label.visible = true
-		name_label.position.x = 60  # 從畫面右方
-		var tw = create_tween()
-		tw.tween_property(name_label, "position:x", -30.0, 0.5).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tw.tween_interval(1.5)
-		tw.tween_property(name_label, "modulate:a", 0.0, 0.5)
-		tw.tween_callback(func():
-			name_label.visible = false
-			name_label.modulate.a = 1.0
-		)
-
-	# 通知所有客戶端播放演出
-	if _is_multiplayer():
-		_rpc_play_intro.rpc()
-	else:
-		# 單人模式：直接控制相機
-		var cameras = get_tree().get_nodes_in_group("camera")
-		for cam in cameras:
-			if cam.has_method("enter_cinema"):
-				cam.enter_cinema(self, 2.0)
-
-
-@rpc("authority", "reliable")
-func _rpc_play_intro():
-	# 客戶端播放入場演出
-	if name_label:
-		name_label.visible = true
-		name_label.position.x = 60
-		var tw = create_tween()
-		tw.tween_property(name_label, "position:x", -30.0, 0.5).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tw.tween_interval(1.5)
-		tw.tween_property(name_label, "modulate:a", 0.0, 0.5)
-		tw.tween_callback(func():
-			name_label.visible = false
-			name_label.modulate.a = 1.0
-		)
-
-	var cameras = get_tree().get_nodes_in_group("camera")
-	for cam in cameras:
-		if cam.has_method("enter_cinema"):
-			cam.enter_cinema(self, 2.0)
 
 
 # === 傷害處理 ===
@@ -514,6 +503,7 @@ func _rpc_hit_fx():
 
 func _apply_damage(amount: int, at_pos: Vector2):
 	hp -= amount
+	_update_hp_bar()
 
 	# 受擊回饋
 	if sfx_hit:
@@ -550,8 +540,10 @@ func _die():
 	if _is_multiplayer():
 		_rpc_die_fx.rpc()
 
-	# 淡出動畫
+	# 死亡動畫：白閃→灰階停留 5 秒→淡出
 	var tw = create_tween()
+	tw.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
+	tw.tween_interval(5.0)
 	tw.tween_property(sprite, "modulate:a", 0.0, 0.5)
 	tw.tween_callback(_hide_and_reset)
 
@@ -562,6 +554,8 @@ func _rpc_die_fx():
 		sfx_die.play()
 	sprite.modulate = Color(5, 5, 5)
 	var tw = create_tween()
+	tw.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
+	tw.tween_interval(5.0)
 	tw.tween_property(sprite, "modulate:a", 0.0, 0.5)
 
 
@@ -621,6 +615,7 @@ func _respawn():
 	if hitbox:
 		hitbox.monitorable = true
 	target = null
+	_update_hp_bar()
 
 
 # === TPK 處理：所有玩家死亡 ===

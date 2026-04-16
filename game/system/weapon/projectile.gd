@@ -6,7 +6,9 @@ class_name Projectile
 var direction := Vector2.RIGHT
 var speed := 150.0
 var damage_amount := 2
-var lifetime := 2.0
+var lifetime := 0.6  # ~90px 飛行距離（約怪物偵測範圍）
+var spawn_pos := Vector2.ZERO
+var max_distance := 90.0
 var team: ResourceDamageTeam
 
 func _ready():
@@ -16,11 +18,15 @@ func _ready():
 	monitoring = true
 	monitorable = false
 	area_entered.connect(_on_area_entered)
-	# 存活時間
+	spawn_pos = global_position
+	# 存活時間（備用，距離限制優先）
 	get_tree().create_timer(lifetime).timeout.connect(queue_free)
 
 func _physics_process(delta):
 	position += direction * speed * delta
+	# 超過最大飛行距離就消失
+	if global_position.distance_to(spawn_pos) >= max_distance:
+		queue_free()
 
 func _on_area_entered(area):
 	if !(area is Hitbox):

@@ -265,8 +265,6 @@ bus = &"Music"
 script = ExtResource("10_4llys")
 
 [node name="Hud" type="CanvasLayer" parent="."]
-scale = Vector2(4, 4)
-transform = Transform2D(4, 0, 0, 4, 0, 0)
 
 [node name="PlayerUi" parent="Hud" instance=ExtResource("15_wger8")]
 unique_name_in_owner = true

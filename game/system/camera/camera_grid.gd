@@ -103,7 +103,7 @@ func snap_to_grid():
 	set_world_position(current_cell * grid_size)
 
 
-# Boss 入場演出用
+# Boss 入場演出用（保留基礎功能）
 var cinema_mode := false
 var cinema_target: Node2D
 
@@ -122,6 +122,8 @@ func enter_cinema(target_node: Node2D, duration: float = 2.0):
 func exit_cinema():
 	cinema_mode = false
 	cinema_target = null
+	if target:
+		go_to_world_position(target.global_position)
 
 
 var shake_tween:Tween

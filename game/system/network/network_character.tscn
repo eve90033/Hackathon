@@ -51,6 +51,7 @@ replication_config = SubResource("SceneReplicationConfig_sync")
 delta_interval = 0.05
 
 [node name="NameLabel" type="Label" parent="."]
+visible = false
 offset_left = -30.0
 offset_top = -24.0
 offset_right = 30.0

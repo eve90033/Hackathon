@@ -9,10 +9,11 @@ var deceleration := 400.0
 var move_vector := Vector2.ZERO
 var target:Node2D
 var monster_key := ""
+var monster_tier := 0  # 0=弱 1=中 2=強
 var min_dist := 12.0
 var max_dist := 28.0
 
-# Combat
+# Combat（根據 tier 調整）
 var attack_target:Node2D
 var attack_cooldown := 0.0
 var attack_range := 30.0
@@ -28,8 +29,19 @@ func _ready():
 	add_to_group("companion")
 	collision_layer = 0
 	collision_mask = 0
+	# 根據怪物強度設定同伴數值
+	_apply_tier_stats()
 	# Don't attack immediately after spawn
 	attack_cooldown = 2.0
+
+
+func _apply_tier_stats():
+	# 弱(T0): 1傷害, 30範圍, 1.5秒CD, 80速度
+	# 中(T1): 2傷害, 35範圍, 1.2秒CD, 90速度
+	# 強(T2): 3傷害, 40範圍, 1.0秒CD, 100速度
+	attack_damage = [1, 2, 3][mini(monster_tier, 2)]
+	attack_range = [30.0, 35.0, 40.0][mini(monster_tier, 2)]
+	speed = [80.0, 90.0, 100.0][mini(monster_tier, 2)]
 
 
 func _is_my_companion() -> bool:
@@ -154,7 +166,7 @@ func _end_attack():
 	sprite.scale = Vector2(0.8, 0.8)
 	sprite.modulate = Color.WHITE
 	is_attacking = false
-	attack_cooldown = 1.5
+	attack_cooldown = [1.5, 1.2, 1.0][mini(monster_tier, 2)]
 	attack_target = null
 	velocity = Vector2.ZERO
 	global_position = pre_attack_pos

@@ -42,6 +42,7 @@ var retarget_timer := 0.0
 var stun_timer := 0.0
 var is_capturable := false
 var monster_key := ""
+var monster_tier := 0  # 0=弱 1=中 2=強（world.gd 生成時設定）
 
 # Damage feedback
 var flash_timer := 0.0
@@ -570,9 +571,21 @@ func _respawn():
 	set_deferred("collision_mask", 1)
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0
+	sprite.scale = Vector2(1.0, 1.0)
 	if hitbox:
 		hitbox.monitorable = true
 	target = null
+	# 通知 client 恢復顯示
+	if _is_multiplayer():
+		_rpc_respawn_fx.rpc()
+
+
+@rpc("authority", "reliable")
+func _rpc_respawn_fx():
+	visible = true
+	sprite.modulate = Color.WHITE
+	sprite.modulate.a = 1.0
+	sprite.scale = Vector2(1.0, 1.0)
 
 
 func _valid_target() -> bool:
@@ -667,7 +680,6 @@ func _capture_success(captor:Node2D):
 	sprite.modulate = Color.WHITE
 	if sfx_capture_ok:
 		sfx_capture_ok.play()
-	_show_floating_text("收服成功！", Color(0.2, 1.0, 0.3))
 
 	# Shrink + fade animation (server side)
 	var tween = create_tween()
@@ -693,7 +705,15 @@ func _rpc_capture_success_fx():
 	sprite.modulate = Color.WHITE
 	if sfx_capture_ok:
 		sfx_capture_ok.play()
-	_show_floating_text("收服成功！", Color(0.2, 1.0, 0.3))
+	# UI 通知（只在收服者的 client 端顯示，延長到 4 秒）
+	var ui = get_node_or_null("/root/UIManager")
+	if ui:
+		var face_path = "res://assets/Actor/Monster/%s/Faceset.png" % monster_key
+		var cn_name = monster_key
+		var world_node = get_tree().root.find_child("World", true, false)
+		if world_node and world_node.get("MONSTER_NAMES"):
+			cn_name = world_node.MONSTER_NAMES.get(monster_key, monster_key)
+		ui.push_notify("收服了 %s！" % cn_name, Color(0.3, 1.0, 0.4), 4.0, face_path)
 	var tw = create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
@@ -711,14 +731,23 @@ func _capture_fail():
 
 
 func _spawn_companion(captor:Node2D):
-	# Remove existing companion
+	# Remove existing companion (notify escape)
 	for old in get_tree().get_nodes_in_group("companion"):
 		if old.target == captor:
+			var old_cn = old.monster_key
+			var world_node = get_tree().root.find_child("World", true, false)
+			if world_node and world_node.get("MONSTER_NAMES"):
+				old_cn = world_node.MONSTER_NAMES.get(old.monster_key, old.monster_key)
+			var ui = get_node_or_null("/root/UIManager")
+			if ui:
+				var old_face = "res://assets/Actor/Monster/%s/Faceset.png" % old.monster_key
+				ui.push_notify("%s 逃走了！" % old_cn, Color(1.0, 0.5, 0.3), 3.0, old_face)
 			old.queue_free()
 	var comp = COMPANION_SCENE.instantiate()
 	comp.global_position = global_position
 	comp.target = captor
 	comp.monster_key = monster_key
+	comp.monster_tier = monster_tier
 	get_parent().add_child(comp)
 	if sprite and sprite.texture:
 		comp.sprite.texture = sprite.texture
@@ -726,27 +755,16 @@ func _spawn_companion(captor:Node2D):
 	if multiplayer.has_multiplayer_peer():
 		var captor_name = captor.name if captor else ""
 		NetworkManager.flog("[Companion] _spawn_companion: captor=%s monster=%s sending rpc" % [captor_name, monster_key])
-		NetworkManager.sync_companion.rpc(captor_name, monster_key)
+		NetworkManager.sync_companion.rpc(captor_name, monster_key, monster_tier)
 
 
 func _show_floating_text(text:String, color:Color):
-	var label = Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", 8)
-	label.add_theme_color_override("font_color", color)
-	label.add_theme_color_override("font_shadow_color", Color.BLACK)
-	label.add_theme_constant_override("shadow_offset_x", 1)
-	label.add_theme_constant_override("shadow_offset_y", 1)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.position = Vector2(-20, -20)
-	add_child(label)
+	var sl = preload("res://system/ui/screen_label.gd").create(
+		self, text, 14, color, Vector2(0, -20))
 	# Float up and fade
 	var tween = create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(label, "position:y", -40.0, 0.8)
-	tween.tween_property(label, "modulate:a", 0.0, 0.8)
-	tween.set_parallel(false)
-	tween.tween_callback(label.queue_free)
+	tween.tween_property(sl, "modulate:a", 0.0, 1.0)
+	tween.tween_callback(sl.queue_free)
 
 
 func _on_detection_entered(body:Node2D):

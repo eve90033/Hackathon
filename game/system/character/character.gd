@@ -49,9 +49,9 @@ var just_teleport := false
 var level := 1
 var xp := 0
 var attack_damage := 2
-const XP_TABLE := [0, 50, 150, 350]  # XP needed for Lv1,2,3,4
-const HP_PER_LEVEL := [5, 6, 7, 8]
-const ATK_PER_LEVEL := [2, 2, 3, 3]
+const XP_TABLE := [0, 20, 50, 100, 170, 260, 370, 500, 660, 850]  # Lv1~10（~15分鐘滿等）
+const HP_PER_LEVEL := [5, 6, 7, 8, 9, 10, 11, 12, 14, 16]
+const ATK_PER_LEVEL := [2, 2, 3, 3, 3, 4, 4, 4, 5, 5]
 
 # Combat
 var combat_timer := 0.0
@@ -242,7 +242,6 @@ func take_hit(damage_amount:int, from_pos:Vector2):
 	hit_taken.emit()
 
 
-var death_countdown_label: Label
 
 func _die():
 	state = State.DEAD
@@ -251,45 +250,33 @@ func _die():
 		weapon_node.set_damage_active(false)
 		weapon_node.state = Weapon.State.BACK
 	died.emit()
-	# 死亡遺失同伴
-	for comp in get_tree().get_nodes_in_group("companion"):
-		if comp.target == self:
-			comp.queue_free()
+	if is_multiplayer_authority():
+		var ui = get_node_or_null("/root/UIManager")
+		if ui:
+			ui.set_layer_active(ui.Priority.DEATH, true)
+	# 死亡遺失同伴（只在 authority 端處理，避免重複觸發）
+	if is_multiplayer_authority() or !multiplayer.has_multiplayer_peer():
+		for comp in get_tree().get_nodes_in_group("companion"):
+			if comp.target == self:
+				var ui = get_node_or_null("/root/UIManager")
+				if ui:
+					var world_node = get_tree().root.find_child("World", true, false)
+					var cn_name = comp.monster_key
+					if world_node and world_node.get("MONSTER_NAMES"):
+						cn_name = world_node.MONSTER_NAMES.get(comp.monster_key, comp.monster_key)
+					var face_path = "res://assets/Actor/Monster/%s/Faceset.png" % comp.monster_key
+					ui.push_notify("%s 逃走了！" % cn_name, Color(1.0, 0.5, 0.3), 3.0, face_path)
+				comp.queue_free()
 	# 死亡儀式：紅閃 → 灰階 → 倒數 → 煙霧重生
 	sprite.modulate = Color(2, 0.3, 0.3)
 	var death_tween = create_tween()
 	death_tween.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
-	death_tween.tween_callback(_show_death_countdown)
 	death_tween.tween_interval(3.0)
 	death_tween.tween_callback(_respawn_with_smoke)
 
 
-func _show_death_countdown():
-	# 顯示 3...2...1 倒數文字（用 tween 代替 timer，節點被刪時自動取消）
-	death_countdown_label = Label.new()
-	death_countdown_label.add_theme_font_size_override("font_size", 8)
-	death_countdown_label.add_theme_color_override("font_color", Color.WHITE)
-	death_countdown_label.add_theme_color_override("font_shadow_color", Color.BLACK)
-	death_countdown_label.add_theme_constant_override("shadow_offset_x", 1)
-	death_countdown_label.add_theme_constant_override("shadow_offset_y", 1)
-	death_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	death_countdown_label.position = Vector2(-8, -24)
-	death_countdown_label.text = "3"
-	add_child(death_countdown_label)
-	var countdown_tween = create_tween()
-	countdown_tween.tween_interval(1.0)
-	countdown_tween.tween_callback(func():
-		if death_countdown_label: death_countdown_label.text = "2")
-	countdown_tween.tween_interval(1.0)
-	countdown_tween.tween_callback(func():
-		if death_countdown_label: death_countdown_label.text = "1")
-
-
 func _respawn_with_smoke():
 	# 煙霧效果：縮小 → 消失 → 移動到重生點 → 放大出現
-	if death_countdown_label:
-		death_countdown_label.queue_free()
-		death_countdown_label = null
 	var smoke_tween = create_tween()
 	smoke_tween.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.2)
 	smoke_tween.tween_callback(func():
@@ -312,6 +299,10 @@ func _respawn():
 	if spawn_position != Vector2.ZERO:
 		global_position = spawn_position
 	_start_invincibility(2.0)  # 2s invincibility after respawn
+	if is_multiplayer_authority():
+		var ui = get_node_or_null("/root/UIManager")
+		if ui:
+			ui.set_layer_active(ui.Priority.DEATH, false)
 
 
 func _start_invincibility(duration:=INVINCIBLE_DURATION):
@@ -351,7 +342,7 @@ func add_xp(amount:int):
 	xp += amount
 	xp_gained.emit(amount)
 	# Check level up
-	while level < 4 and xp >= XP_TABLE[level]:
+	while level < 10 and xp >= XP_TABLE[level]:
 		level += 1
 		attack_damage = ATK_PER_LEVEL[level - 1]
 		if resource_life:
@@ -370,23 +361,10 @@ func _show_levelup_fx():
 	var flash_tween = create_tween()
 	flash_tween.tween_property(sprite, "modulate", Color(1.2, 1.1, 0.8), 0.3)
 	flash_tween.tween_property(sprite, "modulate", Color.WHITE, 0.3)
-	# LEVEL UP 文字上飄漸隱
-	var lvl_label = Label.new()
-	lvl_label.text = "LEVEL UP!"
-	lvl_label.add_theme_font_size_override("font_size", 8)
-	lvl_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.2))
-	lvl_label.add_theme_color_override("font_shadow_color", Color.BLACK)
-	lvl_label.add_theme_constant_override("shadow_offset_x", 1)
-	lvl_label.add_theme_constant_override("shadow_offset_y", 1)
-	lvl_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lvl_label.position = Vector2(-20, -28)
-	add_child(lvl_label)
-	var label_tween = create_tween()
-	label_tween.set_parallel(true)
-	label_tween.tween_property(lvl_label, "position:y", -48.0, 1.0)
-	label_tween.tween_property(lvl_label, "modulate:a", 0.0, 1.0)
-	label_tween.set_parallel(false)
-	label_tween.tween_callback(lvl_label.queue_free)
+	# UI 通知
+	var ui = get_node_or_null("/root/UIManager")
+	if ui:
+		ui.push_notify("Lv%d  HP+1  ATK↑" % level, Color(1.0, 0.9, 0.2), 2.5)
 
 
 func teleport(target_teleporter:Teleporter,offset_position:Vector2):

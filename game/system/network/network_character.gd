@@ -25,6 +25,8 @@ var player_name := "Player":
 			var lbl = get_node_or_null("NameLabel")
 			if lbl:
 				lbl.text = player_name
+			if _name_screen_label:
+				_name_screen_label.text = player_name
 var character_key := "Knight":
 	set(v):
 		character_key = v
@@ -35,6 +37,10 @@ var character_key := "Knight":
 
 @onready var sync: MultiplayerSynchronizer = $MultiplayerSynchronizer
 @onready var name_label: Label = $NameLabel
+
+# CanvasLayer 名字標籤（在螢幕空間渲染，不受 viewport 縮放影響）
+var _name_canvas: CanvasLayer
+var _name_screen_label: Label
 
 
 func _enter_tree():
@@ -50,8 +56,9 @@ func _ready():
 	if ResourceLoader.exists(sprite_path):
 		sprite.texture = load(sprite_path)
 
-	# Name label
+	# Name label (hidden world-space label kept for compat)
 	name_label.text = player_name
+	_setup_screen_name_label()
 
 	# Setup combat: weapon + life
 	_setup_combat()
@@ -74,6 +81,48 @@ func _ready():
 
 	# Call parent _ready for hitbox wiring + SFX
 	super._ready()
+
+
+func _setup_screen_name_label():
+	# 在獨立的 CanvasLayer 渲染名字，避免 viewport 縮放造成模糊
+	_name_canvas = CanvasLayer.new()
+	_name_canvas.layer = 5
+	add_child(_name_canvas)
+
+	_name_screen_label = Label.new()
+	_name_screen_label.text = player_name
+	_name_screen_label.add_theme_font_size_override("font_size", 14)
+	_name_screen_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+	_name_screen_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	_name_screen_label.add_theme_constant_override("shadow_offset_x", 2)
+	_name_screen_label.add_theme_constant_override("shadow_offset_y", 2)
+	_name_screen_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_name_screen_label.size = Vector2(200, 30)
+	_name_canvas.add_child(_name_screen_label)
+
+
+func _process(_delta):
+	_update_screen_name_pos()
+
+
+func _update_screen_name_pos():
+	if !_name_screen_label or !is_inside_tree():
+		return
+	# 把角色世界座標轉成螢幕座標
+	var cam = get_viewport().get_camera_2d()
+	if !cam:
+		_name_screen_label.visible = false
+		return
+	var viewport_size = get_viewport().get_visible_rect().size
+	var canvas_transform = get_viewport().get_canvas_transform()
+	var screen_pos = canvas_transform * (global_position + Vector2(0, -16))
+	_name_screen_label.position = Vector2(screen_pos.x - 100, screen_pos.y - 15)
+	_name_screen_label.visible = true
+
+
+func _exit_tree():
+	if _name_canvas and is_instance_valid(_name_canvas):
+		_name_canvas.queue_free()
 
 
 func _setup_combat():
@@ -302,19 +351,12 @@ func _rpc_death_fx():
 	sprite.modulate = Color(2, 0.3, 0.3)
 	var tw = create_tween()
 	tw.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
-	var skull = Label.new()
-	skull.text = "x_x"
-	skull.add_theme_font_size_override("font_size", 8)
-	skull.add_theme_color_override("font_color", Color.WHITE)
-	skull.add_theme_color_override("font_shadow_color", Color.BLACK)
-	skull.add_theme_constant_override("shadow_offset_x", 1)
-	skull.add_theme_constant_override("shadow_offset_y", 1)
-	skull.position = Vector2(-8, -24)
-	add_child(skull)
+	var skull_sl = preload("res://system/ui/screen_label.gd").create(
+		self, "x_x", 14, Color.WHITE, Vector2(0, -24))
 	tw.tween_interval(3.0)
 	tw.tween_callback(func():
-		if is_instance_valid(skull):
-			skull.queue_free()
+		if is_instance_valid(skull_sl):
+			skull_sl.queue_free()
 	)
 
 
@@ -344,9 +386,13 @@ func add_xp(amount: int):
 
 @rpc("any_peer", "reliable")
 func _rpc_level_sync(new_level: int):
-	# 其他 client 看到升級效果
+	# 同步等級 + HP上限 + ATK（包含自己的 client）
 	if new_level > level:
 		level = new_level
+		attack_damage = ATK_PER_LEVEL[level - 1]
+		if resource_life:
+			resource_life.max_life = HP_PER_LEVEL[level - 1]
+			resource_life.life = resource_life.max_life  # 滿血
 		_show_levelup_fx()
 
 
