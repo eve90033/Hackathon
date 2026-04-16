@@ -13,6 +13,8 @@ func _ready():
 	google_button.pressed.connect(_on_google_login)
 	NetworkManager.connection_succeeded.connect(_on_connected)
 	NetworkManager.login_response.connect(_on_login_response)
+	GoogleAuth.login_completed.connect(_on_google_auth_success)
+	GoogleAuth.login_failed.connect(_on_google_auth_failed)
 	# Auto-login for testing
 	if "--auto-login" in OS.get_cmdline_user_args():
 		get_tree().create_timer(1.0).timeout.connect(_on_google_login)
@@ -20,12 +22,17 @@ func _ready():
 
 func _on_google_login():
 	google_button.disabled = true
-	status_label.text = "登入中..."
+	status_label.text = "Google 登入中..."
+	GoogleAuth.start_login()
 
-	# Simulate Google login: generate a fake user_id from machine
-	var user_id = _generate_user_id()
+
+func _on_google_auth_success(user_data: Dictionary):
+	var user_id = user_data.get("id", "")
+	var display_name = user_data.get("name", "")
 	NetworkManager.my_info.user_id = user_id
-	NetworkManager.flog("[Login] user_id=%s, my_info=%s" % [user_id, str(NetworkManager.my_info)])
+	if not display_name.is_empty():
+		NetworkManager.my_info.name = display_name
+	NetworkManager.flog("[Login] Google user: %s (%s)" % [display_name, user_id])
 
 	# Connect to server
 	status_label.text = "連線中..."
@@ -36,6 +43,11 @@ func _on_google_login():
 		status_label.text = "連線失敗，嘗試自己建立..."
 		NetworkManager.flog("[Login] join_game failed, trying auto_connect")
 		NetworkManager.auto_connect()
+
+
+func _on_google_auth_failed(reason: String):
+	status_label.text = "登入失敗：" + reason
+	google_button.disabled = false
 
 
 func _on_connected():
@@ -74,12 +86,3 @@ func _on_login_response(user_id: String, data: Dictionary):
 		await get_tree().create_timer(0.5).timeout
 		NetworkManager.flog("[Login] Entering world now")
 		get_tree().get_first_node_in_group("main").enter_world()
-
-
-func _generate_user_id() -> String:
-	# Use OS unique ID + process ID for same-machine multiplayer
-	var raw = OS.get_unique_id()
-	if raw.is_empty():
-		raw = "local_%d" % randi()
-	raw += "_%d" % OS.get_process_id()
-	return raw.md5_text().substr(0, 12)

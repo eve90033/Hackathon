@@ -21,6 +21,7 @@ config/icon="res://icon.png"
 ScreenShot="*res://screenshot.gd"
 NetworkManager="*res://system/network/network_manager.gd"
 UIManager="*res://system/ui/ui_manager.gd"
+GoogleAuth="*res://system/network/google_auth.gd"
 
 [display]
 
