@@ -67,7 +67,24 @@ func _ready():
 
 
 func use_weapon():
+	# 遠程武器：生成投射物而非近戰揮砍
+	if resource_weapon and resource_weapon.anim_type == ResourceWeapon.AnimationType.RANGE:
+		spawn_projectile()
 	state = State.ATTACK
+
+
+func spawn_projectile():
+	if !resource_weapon or resource_weapon.anim_type != ResourceWeapon.AnimationType.RANGE:
+		return
+	var proj_scene = preload("res://system/weapon/projectile.tscn")
+	var proj = proj_scene.instantiate()
+	proj.direction = direction
+	proj.damage_amount = damage_area.damage.amount if damage_area.damage else 2
+	proj.team = team
+	# 使用武器的 sprite 作為投射物外觀
+	proj.get_node("Sprite2D").texture = resource_weapon.sprite
+	proj.global_position = global_position + direction * 16.0
+	get_tree().current_scene.add_child(proj)
 
 
 func set_damage_active(active:bool):

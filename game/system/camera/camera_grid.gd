@@ -37,6 +37,9 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
+	# 演出模式中不跟隨玩家
+	if cinema_mode:
+		return
 	if !target:
 		set_process(false)
 	go_to_world_position(target.global_position)
@@ -98,6 +101,27 @@ func _notification(what):
 
 func snap_to_grid():
 	set_world_position(current_cell * grid_size)
+
+
+# Boss 入場演出用
+var cinema_mode := false
+var cinema_target: Node2D
+
+
+func enter_cinema(target_node: Node2D, duration: float = 2.0):
+	cinema_mode = true
+	cinema_target = target_node
+	if tween:
+		tween.kill()
+	tween = create_tween()
+	tween.tween_property(self, "global_position", target_node.global_position, duration * 0.4).set_trans(Tween.TRANS_SINE)
+	tween.tween_interval(duration * 0.4)
+	tween.tween_callback(exit_cinema)
+
+
+func exit_cinema():
+	cinema_mode = false
+	cinema_target = null
 
 
 var shake_tween:Tween

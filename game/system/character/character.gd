@@ -130,6 +130,9 @@ func _physics_process(delta: float) -> void:
 			velocity = Vector2.ZERO
 
 	move_and_slide()
+	# 地圖邊界限制
+	global_position.x = clamp(global_position.x, -480.0, 850.0)
+	global_position.y = clamp(global_position.y, -800.0, 480.0)
 
 
 func _process_idle(delta:float):
@@ -145,14 +148,25 @@ func _process_attack(delta:float):
 	combat_timer += delta
 	velocity = velocity.move_toward(Vector2.ZERO,deceleration*delta)
 
-	# DamageArea activation window
-	if weapon_node:
-		if combat_timer >= ATTACK_ACTIVE_START and combat_timer - delta < ATTACK_ACTIVE_START:
-			weapon_node.set_damage_active(true)
-		if combat_timer >= ATTACK_ACTIVE_END and combat_timer - delta < ATTACK_ACTIVE_END:
-			weapon_node.set_damage_active(false)
+	# 根據武器類型決定攻擊時間參數
+	var atk_dur = ATTACK_DURATION
+	var atk_start = ATTACK_ACTIVE_START
+	var atk_end = ATTACK_ACTIVE_END
+	if weapon_node and weapon_node.resource_weapon:
+		atk_dur = weapon_node.resource_weapon.attack_duration
+		atk_start = weapon_node.resource_weapon.attack_active_start
+		atk_end = weapon_node.resource_weapon.attack_active_end
 
-	if combat_timer >= ATTACK_DURATION:
+	# 近戰 DamageArea 啟用窗口（遠程武器不啟用，由投射物處理傷害）
+	if weapon_node:
+		var is_range = weapon_node.resource_weapon and weapon_node.resource_weapon.anim_type == ResourceWeapon.AnimationType.RANGE
+		if !is_range:
+			if combat_timer >= atk_start and combat_timer - delta < atk_start:
+				weapon_node.set_damage_active(true)
+			if combat_timer >= atk_end and combat_timer - delta < atk_end:
+				weapon_node.set_damage_active(false)
+
+	if combat_timer >= atk_dur:
 		state = State.IDLE
 		if weapon_node:
 			weapon_node.set_damage_active(false)
@@ -190,9 +204,9 @@ func start_attack():
 		sfx_attack.play()
 	if weapon_node:
 		weapon_node.direction = attack_direction
-		weapon_node.state = Weapon.State.ATTACK
 		if weapon_node.damage_area and weapon_node.damage_area.damage:
 			weapon_node.damage_area.damage.amount = attack_damage
+		weapon_node.use_weapon()  # 處理近戰/遠程武器切換
 	attacked.emit()
 
 
@@ -228,6 +242,8 @@ func take_hit(damage_amount:int, from_pos:Vector2):
 	hit_taken.emit()
 
 
+var death_countdown_label: Label
+
 func _die():
 	state = State.DEAD
 	sprite.anim = SpriteCharacter.Anim.DEAD
@@ -235,8 +251,54 @@ func _die():
 		weapon_node.set_damage_active(false)
 		weapon_node.state = Weapon.State.BACK
 	died.emit()
-	# Auto respawn after 1.5s
-	get_tree().create_timer(1.5).timeout.connect(_respawn)
+	# 死亡遺失同伴
+	for comp in get_tree().get_nodes_in_group("companion"):
+		if comp.target == self:
+			comp.queue_free()
+	# 死亡儀式：紅閃 → 灰階 → 倒數 → 煙霧重生
+	sprite.modulate = Color(2, 0.3, 0.3)
+	var death_tween = create_tween()
+	death_tween.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
+	death_tween.tween_callback(_show_death_countdown)
+	death_tween.tween_interval(3.0)
+	death_tween.tween_callback(_respawn_with_smoke)
+
+
+func _show_death_countdown():
+	# 顯示 3...2...1 倒數文字（用 tween 代替 timer，節點被刪時自動取消）
+	death_countdown_label = Label.new()
+	death_countdown_label.add_theme_font_size_override("font_size", 8)
+	death_countdown_label.add_theme_color_override("font_color", Color.WHITE)
+	death_countdown_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	death_countdown_label.add_theme_constant_override("shadow_offset_x", 1)
+	death_countdown_label.add_theme_constant_override("shadow_offset_y", 1)
+	death_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	death_countdown_label.position = Vector2(-8, -24)
+	death_countdown_label.text = "3"
+	add_child(death_countdown_label)
+	var countdown_tween = create_tween()
+	countdown_tween.tween_interval(1.0)
+	countdown_tween.tween_callback(func():
+		if death_countdown_label: death_countdown_label.text = "2")
+	countdown_tween.tween_interval(1.0)
+	countdown_tween.tween_callback(func():
+		if death_countdown_label: death_countdown_label.text = "1")
+
+
+func _respawn_with_smoke():
+	# 煙霧效果：縮小 → 消失 → 移動到重生點 → 放大出現
+	if death_countdown_label:
+		death_countdown_label.queue_free()
+		death_countdown_label = null
+	var smoke_tween = create_tween()
+	smoke_tween.tween_property(sprite, "scale", Vector2(0.1, 0.1), 0.2)
+	smoke_tween.tween_callback(func():
+		_respawn()
+		sprite.scale = Vector2(0.1, 0.1)
+		sprite.modulate.a = 0.5
+	)
+	smoke_tween.tween_property(sprite, "scale", Vector2(1.0, 1.0), 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	smoke_tween.tween_property(sprite, "modulate:a", 1.0, 0.2)
 
 
 func _respawn():
@@ -269,7 +331,9 @@ func try_capture():
 	var nearest:Node2D = null
 	var nearest_dist := 40.0
 	for m in monsters:
-		if !m.is_inside_tree() or m.ai_state == m.AIState.DEAD:
+		if !m.is_inside_tree() or !m.has_method("attempt_capture"):
+			continue
+		if m is MonsterCharacter and m.ai_state == MonsterCharacter.AIState.DEAD:
 			continue
 		var d = global_position.distance_to(m.global_position)
 		if d < nearest_dist:
@@ -297,6 +361,32 @@ func add_xp(amount:int):
 			sfx_levelup.play()
 		print("[Level Up] Lv%d! HP=%d ATK=%d" % [level, HP_PER_LEVEL[level-1], attack_damage])
 		leveled_up.emit(level)
+		_show_levelup_fx()
+
+
+func _show_levelup_fx():
+	# 白閃 → 金色漸變 → 恢復正常
+	sprite.modulate = Color(3, 3, 3)
+	var flash_tween = create_tween()
+	flash_tween.tween_property(sprite, "modulate", Color(1.2, 1.1, 0.8), 0.3)
+	flash_tween.tween_property(sprite, "modulate", Color.WHITE, 0.3)
+	# LEVEL UP 文字上飄漸隱
+	var lvl_label = Label.new()
+	lvl_label.text = "LEVEL UP!"
+	lvl_label.add_theme_font_size_override("font_size", 8)
+	lvl_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.2))
+	lvl_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	lvl_label.add_theme_constant_override("shadow_offset_x", 1)
+	lvl_label.add_theme_constant_override("shadow_offset_y", 1)
+	lvl_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lvl_label.position = Vector2(-20, -28)
+	add_child(lvl_label)
+	var label_tween = create_tween()
+	label_tween.set_parallel(true)
+	label_tween.tween_property(lvl_label, "position:y", -48.0, 1.0)
+	label_tween.tween_property(lvl_label, "modulate:a", 0.0, 1.0)
+	label_tween.set_parallel(false)
+	label_tween.tween_callback(lvl_label.queue_free)
 
 
 func teleport(target_teleporter:Teleporter,offset_position:Vector2):

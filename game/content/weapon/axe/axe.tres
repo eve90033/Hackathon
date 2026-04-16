@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ResourceWeapon" load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://system/damage/resource_damage.gd" id="1_dmg"]
+[ext_resource type="Script" path="res://system/weapon/resource_weapon.gd" id="1_wpn"]
+[ext_resource type="Texture2D" path="res://content/weapon/axe/sprite.png" id="2_spr"]
+[ext_resource type="Texture2D" path="res://content/weapon/axe/in_hand.png" id="3_hand"]
+
+[sub_resource type="Resource" id="Resource_dmg"]
+script = ExtResource("1_dmg")
+amount = 4
+push_force = 20
+
+[resource]
+script = ExtResource("1_wpn")
+sprite = ExtResource("2_spr")
+sprite_in_hand = ExtResource("3_hand")
+anim_type = 0
+damage = SubResource("Resource_dmg")
+attack_duration = 0.6
+attack_active_start = 0.15
+attack_active_end = 0.35

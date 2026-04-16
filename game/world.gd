@@ -83,6 +83,11 @@ func _ready():
 
 	# Spawn monsters
 	_spawn_monsters()
+	# 生成武器架
+	_spawn_weapon_racks()
+	# 生成村莊裝飾（動物 + NPC）
+	_spawn_animals()
+	_spawn_npcs()
 
 	# Note: multiplayer setup is deferred to setup_multiplayer()
 	# called by main.gd after connection is established.
@@ -160,8 +165,8 @@ func _spawn_player_func(data) -> Node:
 	character.player_name = pname
 	character.character_key = char_key
 	character.name = "Player_%d" % peer_id
-	character.position = Vector2(56, 53)
-	character.spawn_position = Vector2(56, 53)
+	character.position = Vector2(659, -675)
+	character.spawn_position = Vector2(17, -147)
 	NetworkManager.flog("[World] _spawn_player_func: peer=%d char=%s is_me=%s" % [peer_id, char_key, str(peer_id == multiplayer.get_unique_id())])
 	if peer_id == multiplayer.get_unique_id():
 		_pending_local_setup = true
@@ -171,8 +176,14 @@ func _spawn_player_func(data) -> Node:
 func _setup_local_player(character):
 	if !is_instance_valid(character):
 		return
+	NetworkManager.flog("[World] _setup_local_player: before pos=%s" % str(character.global_position))
+	# 確保出生在正確位置
+	character.global_position = Vector2(659, -675)
+	character.spawn_position = Vector2(17, -147)
 	camera_grid.target = character
+	camera_grid.teleport_to(character.global_position)
 	local_player = character
+	NetworkManager.flog("[World] _setup_local_player: after pos=%s" % str(character.global_position))
 	if character.resource_life:
 		player_ui.resource_life = character.resource_life
 	_load_player_data(character)
@@ -353,11 +364,15 @@ func _process(_delta):
 				found_chars.append("peer=%d auth=%d name=%s" % [child.peer_id, child.get_multiplayer_authority(), child.name])
 				if child.peer_id == my_id:
 					_setup_local_player(child)
-					print("[World] LOCAL PLAYER FOUND: peer_id=%d my_id=%d" % [child.peer_id, my_id])
+					NetworkManager.flog("[World] LOCAL PLAYER FOUND: peer_id=%d my_id=%d pos=%s" % [child.peer_id, my_id, str(child.global_position)])
 					break
 		if !local_player and found_chars.size() > 0:
+			if Engine.get_process_frames() % 30 == 0:
+				NetworkManager.flog("[World] SEARCHING my_id=%d children=%s" % [my_id, str(found_chars)])
+		elif !local_player:
 			if Engine.get_process_frames() % 60 == 0:
-				print("[World] SEARCHING my_id=%d children=%s" % [my_id, str(found_chars)])
+				var child_count = player_container.get_child_count()
+				NetworkManager.flog("[World] NO CHARS YET my_id=%d child_count=%d" % [my_id, child_count])
 
 	if !local_player:
 		return
@@ -527,28 +542,51 @@ func _set_face(character_key:String):
 
 
 func _spawn_animals():
-	var center := Vector2(56, 53)
-	var count := ALL_ANIMALS.size()
-	for i in count:
-		var key = ALL_ANIMALS[i]
+	# 村莊裝飾動物，散佈在不同區域
+	var animal_data = [
+		{"key": "Cat", "pos": Vector2(-70, -145)},
+		{"key": "Dog", "pos": Vector2(10, -115)},
+		{"key": "Pig", "pos": Vector2(-34, -189), "sprite": "SpriteSheetPink.png"},
+	]
+	for data in animal_data:
 		var animal = animal_scene.instantiate()
-		animal.name = "Animal_" + key
-		# Scatter around village
-		var angle = (i / float(count)) * TAU
-		var radius = 30.0 + randf() * 60.0
-		animal.position = center + Vector2(cos(angle), sin(angle)) * radius
+		animal.name = "Animal_" + data["key"]
+		animal.position = data["pos"]
 		add_child(animal)
-		# Set texture
-		var tex_path = ANIMAL_BASE_PATH + key + "/SpriteSheet.png"
+		var sprite_name = data.get("sprite", "SpriteSheet.png")
+		var tex_path = ANIMAL_BASE_PATH + data["key"] + "/" + sprite_name
 		if ResourceLoader.exists(tex_path):
 			animal.sprite.texture = load(tex_path)
 
 
+func _spawn_npcs():
+	# 村莊 NPC，散佈在村莊不同角落（純本地裝飾，不同步多人）
+	var npc_scene = preload("res://system/character/npc_character.tscn")
+	var npc_configs = [
+		# 衛兵：村莊南側，左右巡邏
+		{"name": "Guard", "character": "SamuraiBlue", "pos": Vector2(-31, -105),
+		 "patrol": [Vector2(-70, -105), Vector2(10, -105)]},
+		# 長老：村莊西北側，小範圍來回
+		{"name": "Elder", "character": "Samurai", "pos": Vector2(-85, -150),
+		 "patrol": [Vector2(-100, -155), Vector2(-70, -145)]},
+	]
+	for config in npc_configs:
+		var npc = npc_scene.instantiate()
+		npc.name = "NPC_" + config["name"]
+		npc.position = config["pos"]
+		npc.character_key = config["character"]
+		npc.patrol_points.assign(config["patrol"])
+		add_child(npc)
+
+
 func _spawn_monsters():
-	var spawn_center := Vector2(56, 53)  # Player spawn
-	var village_min := Vector2(-160, -88)  # Village grid cell bounds
-	var village_max := Vector2(160, 88)
-	var ring_radius := 200.0  # Start outside village
+	var spawn_center := Vector2(-31, -129)  # 村莊中心（怪物圍繞此點展開）
+	# 禁止怪物出現的區域
+	var safe_zones := [
+		Rect2(-130, -200, 200, 140),     # 村莊建築區
+		Rect2(580, -730, 160, 120),      # 房間（出生點）區域
+	]
+	var ring_radius := 200.0  # 起始半徑
 	var count := ALL_MONSTERS.size()
 
 	for i in count:
@@ -561,10 +599,18 @@ func _spawn_monsters():
 		var angle = (i % 12) * (TAU / 12) + ring * 0.5
 		var radius = ring_radius + ring * 80.0
 		var pos = spawn_center + Vector2(cos(angle), sin(angle)) * radius
-		# Push out of village cell
-		if pos.x > village_min.x and pos.x < village_max.x and pos.y > village_min.y and pos.y < village_max.y:
-			var dir = (pos - spawn_center).normalized()
-			pos = spawn_center + dir * (ring_radius + 50)
+		# 確保不在安全區域內
+		for safe in safe_zones:
+			if safe.has_point(pos):
+				var dir = (pos - safe.get_center()).normalized()
+				if dir.length() < 0.1:
+					dir = Vector2.RIGHT
+				pos = safe.get_center() + dir * (safe.size.length() * 0.6 + 50)
+		# 確保不在障礙物上（嘗試偏移最多 5 次）
+		pos = _find_clear_position(pos)
+		# 限制在地圖邊界內
+		pos.x = clamp(pos.x, -460.0, 830.0)
+		pos.y = clamp(pos.y, -780.0, 460.0)
 		monster.position = pos
 
 		# Stats scale with distance from center
@@ -574,6 +620,7 @@ func _spawn_monsters():
 		monster.speed = [45, 55, 60][tier]
 		monster.detection_range = [70, 90, 100][tier]
 		monster.xp_value = [10, 25, 50][tier]
+		monster.behavior_type = tier  # 0=BASIC, 1=DASH, 2=FLANK
 		monster.monster_key = key
 
 		add_child(monster)
@@ -594,6 +641,75 @@ func _spawn_monsters():
 			detect_shape.shape = detect_shape.shape.duplicate()
 			detect_shape.shape.radius = monster.detection_range
 
+	# 生成 Boss
+	var boss_scene = preload("res://system/character/boss_character.tscn")
+	var boss = boss_scene.instantiate()
+	boss.name = "Boss_GiantFrog"
+	boss.position = Vector2(-31, -700)  # 村莊北方遠處
+	add_child(boss)
+
+
+func _spawn_weapon_racks():
+	var weapons = {
+		"axe": preload("res://content/weapon/axe/axe.tres"),
+		"big_sword": preload("res://content/weapon/big_sword/big_sword.tres"),
+		"bone": preload("res://content/weapon/bone/bone.tres"),
+		"book": preload("res://content/weapon/book/book.tres"),
+	}
+	var positions = [
+		Vector2(-70, -130),   # 村莊內西側
+		Vector2(30, -130),    # 村莊內東側
+		Vector2(-70, -160),   # 村莊內西北
+		Vector2(30, -160),    # 村莊內東北
+	]
+	var i := 0
+	for wname in weapons:
+		var rack = StaticBody2D.new()
+		rack.set_script(preload("res://system/weapon/weapon_rack.gd"))
+		rack.name = "WeaponRack_" + wname
+		rack.position = positions[i]
+		rack.weapon_resource = weapons[wname]
+		rack.add_to_group("weapon_rack")
+		add_child(rack)
+		i += 1
+
+
+func _is_position_blocked(tilemap: TileMap, pos: Vector2) -> bool:
+	## 檢查位置是否在 TileMap 障礙物上
+	for ox in [-8, 0, 8]:
+		for oy in [-8, 0, 8]:
+			var local_pos = (pos + Vector2(ox, oy)) - tilemap.position
+			var cell = tilemap.local_to_map(local_pos)
+			for layer in tilemap.get_layers_count():
+				var tile_data = tilemap.get_cell_tile_data(layer, cell)
+				if tile_data:
+					for pl in tilemap.tile_set.get_physics_layers_count():
+						if tile_data.get_collision_polygons_count(pl) > 0:
+							return true
+	return false
+
+
+func _find_clear_position(pos: Vector2) -> Vector2:
+	## 找到附近沒有障礙物的位置
+	var tilemap = map.get_node_or_null("Tilemap") as TileMap
+	if !tilemap:
+		return pos
+	if !_is_position_blocked(tilemap, pos):
+		return pos
+	# 嘗試 8 個方向，逐步增加距離
+	var directions = [
+		Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN,
+		Vector2(1,1).normalized(), Vector2(1,-1).normalized(),
+		Vector2(-1,1).normalized(), Vector2(-1,-1).normalized(),
+	]
+	for dist in [24, 48, 72, 96]:
+		for dir in directions:
+			var test_pos = pos + dir * dist
+			if !_is_position_blocked(tilemap, test_pos):
+				return test_pos
+	# 全部失敗，回傳原始位置
+	print("[Spawn] WARNING: 無法找到空地 pos=%s" % str(pos))
+	return pos
 
 
 func play_transition(type:Transition.Type):

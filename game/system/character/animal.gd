@@ -38,8 +38,40 @@ var current_image:= 0.0:
 var move_vector:Vector2
 var velocity := Vector2.ZERO
 
+# 自動漫步相關
+var wander_timer := 0.0
+var wander_duration := 0.0
+var home_position := Vector2.ZERO
+var wander_range := 30.0
+
 
 @onready var sprite: Sprite2D = $Sprite
+
+
+func _is_server() -> bool:
+	return !multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+
+func _ready():
+	if Engine.is_editor_hint():
+		return
+	home_position = global_position
+	if multiplayer.has_multiplayer_peer():
+		set_multiplayer_authority(1)
+	if _is_server():
+		_pick_new_wander()
+
+
+func _pick_new_wander():
+	# 隨機選擇：移動或停下休息
+	if randf() < 0.4:
+		# 停下休息
+		move_vector = Vector2.ZERO
+		wander_duration = randf_range(2.0, 5.0)
+	else:
+		# 朝隨機方向移動
+		var angle = randf() * TAU
+		move_vector = Vector2(cos(angle), sin(angle))
+		wander_duration = randf_range(1.0, 3.0)
 
 
 func update_animation():
@@ -49,15 +81,31 @@ func update_animation():
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
+
+	# Server 跑 AI 邏輯，client 只渲染同步的位置
+	if _is_server():
+		wander_timer += delta
+		if wander_timer >= wander_duration:
+			wander_timer = 0.0
+			_pick_new_wander()
+		if global_position.distance_to(home_position) > wander_range:
+			move_vector = (home_position - global_position).normalized()
+
+		if move_vector.length():
+			if move_vector.x != 0:
+				sprite.flip_h = move_vector.x < 0
+			velocity = velocity.move_toward(move_vector*(speed*delta),acceleration*delta)
+		else:
+			velocity = velocity.move_toward(Vector2.ZERO,acceleration*delta)
+		global_position += velocity
+
+	# Client 端：根據同步的 move_vector 更新面向
+	if !_is_server() and move_vector.length() and move_vector.x != 0:
+		sprite.flip_h = move_vector.x < 0
+
+	# 動畫（server + client 都跑）
 	current_image += IMAGE_SPEED*delta
 	if move_vector.length():
-		if move_vector.x != 0:
-			sprite.flip_h = sign(move_vector.x) != -1
-		velocity = velocity.move_toward(move_vector*(speed*delta),acceleration*delta)
-	else:
-		velocity = velocity.move_toward(Vector2.ZERO,acceleration*delta)
-	if velocity.length():
 		anim = Anim.MOVING
 	else:
 		anim = Anim.IDLE
-	global_position += velocity

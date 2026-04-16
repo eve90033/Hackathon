@@ -38,6 +38,9 @@ func _ready() -> void:
 
 
 func on_player_entered(player:Character):
+	# 只對本地玩家觸發傳送，不影響其他 client
+	if player is NetworkCharacter and !player.is_multiplayer_authority():
+		return
 	var transition:Transition = get_tree().get_first_node_in_group("transition")
 	if transition:
 		await transition.play(transition_enter)
