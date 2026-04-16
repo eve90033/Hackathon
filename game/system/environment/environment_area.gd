@@ -17,6 +17,9 @@ func _ready() -> void:
 
 
 func on_player_enter_environment_shape(body_rid, body, body_shape_index,local_shape_index):
+	# 只對本地玩家觸發天氣切換
+	if body is NetworkCharacter and !body.is_multiplayer_authority():
+		return
 	var shape = get_child(local_shape_index)
 	if shape is EnvironmentShape:
 		environment_changed.emit(shape.resource_environment)

@@ -7,6 +7,8 @@
 - 不要猜，先搜尋確認再動手
 - 視覺性的東西要用截圖驗證
 - 同一個方法失敗 2 次就換路線，不要盲目重試
+- **Subagent 或自己寫完程式碼後，必須實際啟動遊戲抓 stdout，grep `SCRIPT ERROR` 確認零錯誤才算完成。`--editor --quit --headless` 只做 import，不能捕捉所有編譯錯誤（例如 class_name 解析失敗）。**
+- 新增 class_name 的 .gd 檔案後，其他腳本不要直接用類型名引用，改用 `preload()` + `set_script()` 避免 import 順序問題
 
 ## 截圖驗證標準
 - 截圖後必須認真確認畫面內容是否正確，不能只看「有東西在渲染」就說正常

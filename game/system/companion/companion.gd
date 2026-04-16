@@ -91,7 +91,9 @@ func _find_attack_target():
 	var monsters = get_tree().get_nodes_in_group("monster")
 	var nearest_dist := attack_range
 	for m in monsters:
-		if !m.is_inside_tree() or m.ai_state == m.AIState.DEAD:
+		if !m.is_inside_tree() or !(m is MonsterCharacter):
+			continue
+		if m.ai_state == MonsterCharacter.AIState.DEAD:
 			continue
 		var d = global_position.distance_to(m.global_position)
 		if d < nearest_dist:

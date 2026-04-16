@@ -21,6 +21,7 @@ signal monster_captured(monster, captor)
 @export var xp_value := 10
 @export var hp_drop_value := 1
 @export var respawn_time := 30.0
+@export var behavior_type: int = 0  # 0=BASIC(弱怪), 1=DASH(中怪), 2=FLANK(強怪)
 
 const HP_PICKUP_SCENE = preload("res://system/item/hp_pickup.tscn")
 const COMPANION_SCENE = preload("res://system/companion/companion.tscn")
@@ -58,6 +59,13 @@ var sfx_capture_ok:AudioStreamPlayer
 var sfx_capture_fail:AudioStreamPlayer
 var capture_cooldown := 0.0
 
+# DASH 行為用：暫停計時器
+var _dash_pause_timer := 0.0
+var _dash_ready := false
+
+# FLANK 行為用：正弦偏移累計時間
+var _flank_time := 0.0
+
 
 func _is_server() -> bool:
 	return multiplayer.has_multiplayer_peer() and multiplayer.is_server()
@@ -76,7 +84,7 @@ func _ready():
 	if _is_multiplayer():
 		set_multiplayer_authority(1)
 
-	# Only collide with walls, not players
+	# 跟牆壁碰撞，不跟玩家碰撞
 	set_collision_mask_value(2, false)
 	# SFX
 	sfx_hit = AudioStreamPlayer.new()
@@ -159,6 +167,9 @@ func _physics_process(delta:float):
 			velocity = Vector2.ZERO
 
 	move_and_slide()
+	# 地圖邊界限制
+	global_position.x = clamp(global_position.x, -480.0, 850.0)
+	global_position.y = clamp(global_position.y, -800.0, 480.0)
 
 
 var _client_attack_timer := 0.0
@@ -225,12 +236,18 @@ func _process_client(delta:float):
 
 
 func _process_idle(delta:float):
-	move_vector = Vector2.ZERO
-	sprite.anim = 0  # IDLE
-	velocity = velocity.move_toward(Vector2.ZERO, deceleration*delta)
+	# 沒有目標時慢慢走回家
+	if !target and global_position.distance_to(home_position) > 8:
+		move_vector = global_position.direction_to(home_position)
+		sprite.anim = 1  # MOVING
+		velocity = velocity.move_toward(move_vector * speed * 0.5, acceleration * delta)
+	else:
+		move_vector = Vector2.ZERO
+		sprite.anim = 0  # IDLE
+		velocity = velocity.move_toward(Vector2.ZERO, deceleration*delta)
 
-	# Check for nearby players
-	if target and target.is_inside_tree():
+	# 有目標且存活才追
+	if target and _valid_target():
 		var dist = global_position.distance_to(target.global_position)
 		if dist <= detection_range:
 			ai_state = AIState.CHASE
@@ -239,15 +256,20 @@ func _process_idle(delta:float):
 func _process_chase(delta:float):
 	if !_valid_target():
 		ai_state = AIState.IDLE
+		target = null  # 清除目標，回家
+		_dash_pause_timer = 0.0
+		_dash_ready = false
 		return
 
-	# Roaming limit: don't go too far from home
+	# 漫遊限制：不要離家太遠
 	if global_position.distance_to(home_position) > 500:
 		ai_state = AIState.IDLE
 		target = null
+		_dash_pause_timer = 0.0
+		_dash_ready = false
 		return
 
-	# Retarget periodically
+	# 定期重新搜索目標
 	retarget_timer -= delta
 	if retarget_timer <= 0:
 		retarget_timer = 0.5
@@ -258,15 +280,58 @@ func _process_chase(delta:float):
 		return
 
 	var dist = global_position.distance_to(target.global_position)
+	var dir = global_position.direction_to(target.global_position)
 
-	if dist <= attack_range:
-		ai_state = AIState.ATTACK
-		return
+	# 根據行為類型分支處理
+	match behavior_type:
+		0:
+			# BASIC（弱怪）：直線追蹤
+			if dist <= attack_range:
+				ai_state = AIState.ATTACK
+				return
+			move_vector = dir
+			sprite.anim = 1  # MOVING
+			velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
+		1:
+			# DASH（中怪）：停頓後衝刺
+			if _dash_ready:
+				# 衝刺已就緒，直接進攻
+				velocity = dir * speed * 4.0
+				ai_state = AIState.ATTACK
+				_dash_ready = false
+				_dash_pause_timer = 0.0
+				return
 
-	# Move toward target
-	move_vector = global_position.direction_to(target.global_position)
-	sprite.anim = 1  # MOVING
-	velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
+			if dist < detection_range * 0.6:
+				# 進入暫停蓄力階段
+				move_vector = Vector2.ZERO
+				velocity = Vector2.ZERO
+				sprite.anim = 0  # IDLE（蓄力中）
+				sprite.modulate = Color(1.2, 0.8, 0.8)  # 微紅提示
+				_dash_pause_timer += delta
+				if _dash_pause_timer >= 0.4:
+					# 蓄力完成，下一幀衝刺
+					_dash_ready = true
+					sprite.modulate = Color.WHITE
+			else:
+				# 還在接近中，正常追蹤
+				_dash_pause_timer = 0.0
+				move_vector = dir
+				sprite.anim = 1  # MOVING
+				velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
+		2:
+			# FLANK（強怪）：正弦偏移迂迴接近
+			if dist <= attack_range:
+				ai_state = AIState.ATTACK
+				_flank_time = 0.0
+				return
+			_flank_time += delta
+			# 計算垂直於追蹤方向的偏移
+			var perpendicular = Vector2(-dir.y, dir.x)
+			var flank_offset = sin(_flank_time * 3.0) * 30.0 * perpendicular
+			move_vector = (dir * speed + flank_offset).normalized()
+			sprite.anim = 1  # MOVING
+			velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
 
 
 var attack_phase := 0  # 0=charge, 1=lunge
@@ -429,9 +494,27 @@ func _rpc_die_fx():
 
 
 func _drop_hp():
+	## 掉落 HP 拾取物（多人模式廣播生成）
+	if _is_multiplayer():
+		_hp_drop_counter += 1
+		_rpc_spawn_hp.rpc(global_position, hp_drop_value, _hp_drop_counter)
+	else:
+		var pickup = HP_PICKUP_SCENE.instantiate()
+		pickup.heal_amount = hp_drop_value
+		pickup.global_position = global_position
+		get_parent().add_child(pickup)
+
+
+var _hp_drop_counter := 0
+
+@rpc("authority", "call_local", "reliable")
+func _rpc_spawn_hp(pos: Vector2, heal: int, drop_id: int):
+	## 所有 client + server 生成 HP 拾取物
 	var pickup = HP_PICKUP_SCENE.instantiate()
-	pickup.heal_amount = hp_drop_value
-	pickup.global_position = global_position
+	pickup.heal_amount = heal
+	pickup.global_position = pos
+	# 確定性命名，所有端一致
+	pickup.name = "HP_%s_%d" % [name, drop_id]
 	get_parent().add_child(pickup)
 
 
@@ -593,7 +676,6 @@ func _capture_success(captor:Node2D):
 	tween.tween_property(sprite, "modulate:a", 0.0, 0.4)
 	tween.set_parallel(false)
 	tween.tween_callback(func():
-		_give_xp()
 		_spawn_companion(captor)
 		set_deferred("collision_layer", 0)
 		set_deferred("collision_mask", 0)
