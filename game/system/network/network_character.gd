@@ -126,10 +126,10 @@ func _physics_process(delta: float) -> void:
 func _on_weapon_hit(_area):
 	if !is_multiplayer_authority():
 		return
-	# Hit-stop only: brief engine freeze (0.04s)
-	Engine.time_scale = 0.05
-	get_tree().create_timer(0.04, true, false, true).timeout.connect(
-		func(): Engine.time_scale = 1.0
+	# Hit-stop: pause local character physics only (not global Engine.time_scale)
+	set_physics_process(false)
+	get_tree().create_timer(0.05).timeout.connect(
+		func(): set_physics_process(true)
 	)
 
 

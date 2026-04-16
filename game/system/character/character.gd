@@ -61,10 +61,11 @@ var is_invincible := false
 var attack_direction := Vector2.DOWN
 var push_velocity := Vector2.ZERO
 var weapon_node:Weapon
+var spawn_position := Vector2.ZERO
 
-const ATTACK_DURATION := 0.15
-const ATTACK_ACTIVE_START := 0.03
-const ATTACK_ACTIVE_END := 0.10
+const ATTACK_DURATION := 0.4
+const ATTACK_ACTIVE_START := 0.10
+const ATTACK_ACTIVE_END := 0.25
 const HIT_DURATION := 0.3
 const INVINCIBLE_DURATION := 0.5
 const DODGE_DURATION := 0.25
@@ -213,9 +214,14 @@ func take_hit(damage_amount:int, from_pos:Vector2):
 		if !resource_life.is_alive():
 			_die()
 			return
-	# Flash only, no stun/knockback
-	_start_invincibility(0.5)
-	sprite.modulate = Color(5,5,5)
+	# Enter HIT state with knockback
+	state = State.HIT
+	combat_timer = HIT_DURATION
+	push_velocity = (global_position - from_pos).normalized() * 200.0
+	if weapon_node:
+		weapon_node.set_damage_active(false)
+		weapon_node.state = Weapon.State.BACK
+	sprite.modulate = Color(5, 5, 5)
 	get_tree().create_timer(0.1).timeout.connect(func(): sprite.modulate = Color.WHITE)
 	if sfx_hurt:
 		sfx_hurt.play()
@@ -240,6 +246,9 @@ func _respawn():
 	sprite.anim = SpriteCharacter.Anim.IDLE
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0
+	# Move back to spawn point
+	if spawn_position != Vector2.ZERO:
+		global_position = spawn_position
 	_start_invincibility(2.0)  # 2s invincibility after respawn
 
 

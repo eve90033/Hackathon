@@ -103,19 +103,20 @@ func _start_attack():
 	is_attacking = true
 	attack_timer = 0.0
 	pre_attack_pos = global_position
-	# Scale up + tint
+	# Scale up for charge telegraph (no red tint)
 	sprite.scale = Vector2(1.0, 1.0)
-	sprite.modulate = Color(1.2, 0.8, 0.8)
+	sprite.modulate = Color.WHITE
 
 
 func _process_attack(delta):
 	attack_timer += delta
 
 	if attack_timer < 0.2:
-		# Charge: stop and telegraph
+		# Charge: stop and telegraph (scale pulse, no red tint)
 		velocity = Vector2.ZERO
-		sprite.scale = Vector2(1.0, 1.0)
-		sprite.modulate = Color(1.2, 0.8, 0.8)
+		var t = attack_timer / 0.2
+		sprite.scale = Vector2(1.0 + t * 0.15, 1.0 + t * 0.15)
+		sprite.modulate = Color.WHITE
 	elif attack_timer < 0.3:
 		# Short lunge toward target direction (don't go all the way)
 		if attack_target and is_instance_valid(attack_target) and attack_target.is_inside_tree():
@@ -131,6 +132,7 @@ func _process_attack(delta):
 					attack_target._on_damage_received(dmg, global_position)
 		else:
 			attack_target = null
+			_end_attack()
 	elif attack_timer < 0.45:
 		# Return to pre-attack position
 		var dir = global_position.direction_to(pre_attack_pos)
@@ -140,16 +142,20 @@ func _process_attack(delta):
 			velocity = Vector2.ZERO
 	else:
 		# Done
-		sprite.scale = Vector2(0.8, 0.8)
-		sprite.modulate = Color.WHITE
-		is_attacking = false
-		attack_cooldown = 1.5
-		attack_target = null
-		velocity = Vector2.ZERO
-		global_position = pre_attack_pos
+		_end_attack()
 
 	_update_anim()
 	move_and_slide()
+
+
+func _end_attack():
+	sprite.scale = Vector2(0.8, 0.8)
+	sprite.modulate = Color.WHITE
+	is_attacking = false
+	attack_cooldown = 1.5
+	attack_target = null
+	velocity = Vector2.ZERO
+	global_position = pre_attack_pos
 
 
 func _update_anim():
