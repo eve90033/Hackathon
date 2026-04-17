@@ -59,10 +59,10 @@ const MONSTER_NAMES := {
 }
 
 # 動物中文名
-const ANIMAL_NAMES := {"Cat": "小花貓", "Dog": "忠犬", "Pig": "粉豬豬"}
+const ANIMAL_NAMES := {"Pig": "粉豬豬"}
 
 # NPC 中文名
-const NPC_NAMES := {"Guard": "衛兵", "Elder": "長老"}
+const NPC_NAMES := {"Guard": "車手阿志", "ChenChimney": "陳煙囪", "WangKaiming": "王巨螺"}
 
 const ALL_MONSTERS := [
 	"Axolot", "AxolotBlue", "Bamboo", "BambooYellow", "Bear", "Beast", "Beast2",
@@ -166,6 +166,7 @@ func _spawn_single_player():
 	local_player = character
 	# Load saved data (level, XP, companion)
 	_load_player_data(character)
+	_hook_save_events(character)
 	# Wire HP UI
 	if character.resource_life:
 		player_ui.resource_life = character.resource_life
@@ -197,6 +198,18 @@ func _spawn_player_func(data) -> Node:
 	character.name = "Player_%d" % peer_id
 	character.position = Vector2(659, -675)
 	character.spawn_position = Vector2(17, -147)
+	# Server is source of truth: apply saved level/HP on our copy so pickup
+	# heal / damage calcs use the correct cap. We deferred-call it because
+	# `_ready` (which sets default max_life=5) runs after instantiate completes.
+	if multiplayer.is_server() and data is Dictionary:
+		var user_id := ""
+		var pinfo = NetworkManager.players.get(peer_id, {})
+		if pinfo is Dictionary:
+			user_id = pinfo.get("user_id", "")
+		if user_id != "":
+			var save = NetworkManager.player_database.get(user_id, {})
+			if save.has("level") and save["level"] > 1:
+				character.call_deferred("_apply_server_restore", save)
 	NetworkManager.flog("[World] _spawn_player_func: peer=%d char=%s is_me=%s" % [peer_id, char_key, str(peer_id == multiplayer.get_unique_id())])
 	if peer_id == multiplayer.get_unique_id():
 		_pending_local_setup = true
@@ -217,6 +230,7 @@ func _setup_local_player(character):
 	if character.resource_life:
 		player_ui.resource_life = character.resource_life
 	_load_player_data(character)
+	_hook_save_events(character)
 	_show_tutorial_hints()
 	# 向 server 請求武器架狀態同步
 	if multiplayer.has_multiplayer_peer() and !multiplayer.is_server():
@@ -236,6 +250,32 @@ func _request_spawn():
 	var info = NetworkManager.players.get(sender, {})
 	NetworkManager.flog("[World] Server spawning Player_%d via spawner, char=%s" % [sender, info.get("character", "?")])
 	spawner.spawn({"peer_id": sender, "name": info.get("name", "Player"), "character": info.get("character", "Knight")})
+	# MultiplayerSpawner replicates Player nodes but NOT companion state, so late
+	# joiners don't see existing players' companions. Re-broadcast from server's
+	# saved data. Defer via Timer (NOT await) so this RPC handler returns
+	# immediately — awaiting inside an RPC handler turns it into a Coroutine
+	# that can stall Godot 4's MultiplayerAPI dispatch for other peers.
+	var t := get_tree().create_timer(1.0)
+	t.timeout.connect(_send_existing_companions_to.bind(sender), CONNECT_ONE_SHOT)
+
+
+func _send_existing_companions_to(target_peer: int) -> void:
+	if !is_instance_valid(self):
+		return
+	for pid in NetworkManager.players.keys():
+		if pid == 1 or pid == target_peer:
+			continue
+		var pinfo = NetworkManager.players.get(pid, {})
+		var user_id: String = pinfo.get("user_id", "") if pinfo is Dictionary else ""
+		if user_id == "":
+			continue
+		var save: Dictionary = NetworkManager.player_database.get(user_id, {})
+		var comp_key: String = save.get("companion", "")
+		if comp_key == "":
+			continue
+		var captor_name := "Player_%d" % pid
+		NetworkManager.flog("[World] Sending companion %s for %s to peer %d" % [comp_key, captor_name, target_peer])
+		NetworkManager.sync_companion.rpc_id(target_peer, captor_name, comp_key, 0)
 
 
 func _on_player_connected(peer_id: int):
@@ -248,6 +288,11 @@ func _on_player_connected(peer_id: int):
 func _on_player_disconnected(peer_id: int):
 	print("[World] Removing player %d" % peer_id)
 	var node = player_container.get_node_or_null("Player_%d" % peer_id)
+	# Clean up orphan companions BEFORE freeing the target, so any
+	# `companion.target == node` check still works.
+	for comp in get_tree().get_nodes_in_group("companion"):
+		if comp.target == node:
+			comp.queue_free()
 	if node:
 		node.queue_free()
 
@@ -255,6 +300,58 @@ func _on_player_disconnected(peer_id: int):
 func _on_server_disconnected():
 	# Go back to title
 	get_tree().change_scene_to_file("res://main.tscn")
+
+
+# --- Tab-switch recovery (web browsers throttle rAF while a tab is hidden,
+# so MultiplayerSynchronizer packets pile up in the WebSocket queue and replay
+# as a "history rewind" on the client when the tab resumes. We fast-forward by
+# snapping every synced visible entity to its authoritative target_position.)
+
+var _tab_was_hidden := false
+
+func _notification(what:int) -> void:
+	match what:
+		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+			_tab_was_hidden = true
+		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_WM_WINDOW_FOCUS_IN:
+			if _tab_was_hidden:
+				_tab_was_hidden = false
+				_handle_tab_resume()
+
+
+func _handle_tab_resume() -> void:
+	if NetworkManager.is_dedicated_server:
+		return
+	# Give MultiplayerSynchronizer a couple frames to drain queued packets and
+	# settle properties at the latest server state before we snap.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_snap_all_to_targets()
+
+
+func _snap_all_to_targets() -> void:
+	# Remote players — local authority already has correct position.
+	for p in get_tree().get_nodes_in_group("player"):
+		if p is NetworkCharacter and !p.is_multiplayer_authority():
+			p.global_position = p.target_position
+			p._remote_prev_state = p.state
+	# Monsters + Bosses (both in "monster" group)
+	for m in get_tree().get_nodes_in_group("monster"):
+		if !("target_position" in m):
+			continue
+		m.global_position = m.target_position
+		if m is MonsterCharacter:
+			m._prev_ai_state = m.ai_state
+			m._client_attack_timer = 0.0
+		elif m is BossCharacter:
+			m._prev_boss_state = m.boss_state
+			m._client_attack_timer = 0.0
+	# Animals + NPCs are direct children of World, not in any group
+	for child in get_children():
+		if child is NPCCharacter and "target_position" in child:
+			child.global_position = child.target_position
+		elif child.name.begins_with("Animal_") and "target_position" in child:
+			child.global_position = child.target_position
 
 
 func on_camera_animation_finished():
@@ -369,6 +466,10 @@ func _make_label(text:String, pos:Vector2, color:Color) -> Label:
 	lbl.text = text
 	lbl.position = pos
 	lbl.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	# Explicitly apply NotoSansTC font (HUD is on CanvasLayer, doesn't inherit theme)
+	var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+	if cjk_font:
+		lbl.add_theme_font_override("font", cjk_font)
 	lbl.add_theme_font_size_override("font_size", 14)
 	lbl.add_theme_color_override("font_color", color)
 	lbl.add_theme_color_override("font_shadow_color", Color.BLACK)
@@ -462,9 +563,9 @@ func _process(_delta):
 	# 新手引導檢查
 	_check_tutorial_triggers()
 
-	# Auto-save check + sync peers
+	# Auto-save polling：5 秒兜底檢查（關鍵事件會用 signal 立即存）
 	save_timer += _delta
-	if save_timer >= 2.0:
+	if save_timer >= 5.0:
 		save_timer = 0.0
 		_auto_save()
 
@@ -476,6 +577,8 @@ func _process(_delta):
 			break
 	if current_comp_key != companion_face_key:
 		companion_face_key = current_comp_key
+		# 同伴變動立即觸發存檔
+		_on_save_trigger()
 		if companion_face_icon and is_instance_valid(companion_face_icon):
 			companion_face_icon.queue_free()
 			companion_face_icon = null
@@ -502,6 +605,9 @@ func _process(_delta):
 				var cn_name = MONSTER_NAMES.get(companion_face_key, companion_face_key)
 				var lbl = Label.new()
 				lbl.text = cn_name
+				var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+				if cjk_font:
+					lbl.add_theme_font_override("font", cjk_font)
 				lbl.add_theme_font_size_override("font_size", 14)
 				lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
 				lbl.add_theme_color_override("font_shadow_color", Color.BLACK)
@@ -583,6 +689,21 @@ func _check_tutorial_triggers():
 					break
 
 
+func _hook_save_events(character):
+	## 關鍵事件立即存檔，不等 polling
+	if character.leveled_up.is_connected(_on_save_trigger):
+		return
+	character.leveled_up.connect(_on_save_trigger)
+	if character is NetworkCharacter:
+		if !character.weapon_changed.is_connected(_on_save_trigger):
+			character.weapon_changed.connect(_on_save_trigger)
+
+
+func _on_save_trigger(_unused = null):
+	# 下一個 frame 觸發存檔（確保相關狀態已經更新完成，例如 HP/同伴）
+	call_deferred("_auto_save")
+
+
 func _auto_save():
 	if !local_player:
 		return
@@ -631,12 +752,19 @@ func _load_player_data(character:Character):
 	if character.resource_life and data.has("level"):
 		character.resource_life.max_life = character.HP_PER_LEVEL[character.level - 1]
 		character.resource_life.life = character.resource_life.max_life
+	# Server-side restore (world._spawn_player_func → _apply_server_restore)
+	# takes authority for this. We only apply locally for instant UI; server's
+	# RPC will override if out of sync.
 	# Restore weapon
 	if data.has("weapon") and data["weapon"] != "club" and character is NetworkCharacter:
 		character.change_weapon(data["weapon"])
 	# Restore companion
 	if data.has("companion") and data["companion"] != "":
 		_restore_companion(character, data["companion"])
+		# Also broadcast to other peers — they didn't see our original capture.
+		# Without this, the saved companion is only visible on our own screen.
+		if multiplayer.has_multiplayer_peer():
+			NetworkManager.sync_companion.rpc(character.name, data["companion"], 0)
 	# Sync save state so auto-save doesn't overwrite with defaults
 	last_save_level = character.level
 	last_save_xp = character.xp
@@ -688,8 +816,6 @@ func _set_face(character_key:String):
 func _spawn_animals():
 	# 村莊裝飾動物，散佈在不同區域
 	var animal_data = [
-		{"key": "Cat", "pos": Vector2(-70, -145)},
-		{"key": "Dog", "pos": Vector2(10, -115)},
 		{"key": "Pig", "pos": Vector2(-34, -189), "sprite": "SpriteSheetPink.png"},
 	]
 	for data in animal_data:
@@ -713,14 +839,19 @@ func _spawn_npcs():
 	# 村莊 NPC，散佈在村莊不同角落（純本地裝飾，不同步多人）
 	var npc_scene = preload("res://system/character/npc_character.tscn")
 	var npc_configs = [
-		# 衛兵：村莊南側，左右巡邏
-		{"name": "Guard", "character": "SamuraiBlue", "pos": Vector2(-31, -105),
+		# 車手阿志：村莊南側，左右巡邏
+		{"name": "Guard", "character": "Caveman", "pos": Vector2(-31, -105),
 		 "patrol": [Vector2(-70, -105), Vector2(10, -105)]},
-		# 長老：村莊西北側，小範圍來回
-		{"name": "Elder", "character": "Samurai", "pos": Vector2(-85, -150),
-		 "patrol": [Vector2(-100, -155), Vector2(-70, -145)]},
+		# 陳煙囪：村莊東南側，小範圍來回（跟王開明站一起聊天）
+		{"name": "ChenChimney", "character": "Noble", "pos": Vector2(120, -95),
+		 "patrol": [Vector2(115, -98), Vector2(127, -92)],
+		 "shout": "那邊有低能兒"},
+		# 王巨螺：村莊東南側，小範圍來回（跟陳煙囪站一起）
+		{"name": "WangKaiming", "character": "Sultan", "pos": Vector2(143, -95),
+		 "patrol": [Vector2(139, -98), Vector2(151, -92)],
+		 "shout": "龍哥好帥帥喔"},
 		# 楊總統：村莊中央廣場，來回走動，只顯示憤怒表情
-		{"name": "President", "character": "Knight", "pos": Vector2(-31, -145),
+		{"name": "President", "character": "Villager", "pos": Vector2(-31, -145),
 		 "patrol": [Vector2(-60, -145), Vector2(0, -145)],
 		 "display_name": "楊總統", "shout": "賴祥德我是不會屈服的",
 		 "emotes": [3, 4, 10, 15, 21, 22], "emote_interval": 4.0},
@@ -818,15 +949,20 @@ func _spawn_monsters():
 		var _sl = preload("res://system/ui/screen_label.gd")
 		_sl.create(monster, cn_name, 14, name_color, Vector2(0, -18))
 
-		# Find sprite texture
+		# Find sprite texture — try several naming patterns
 		var tex_path = MONSTER_BASE_PATH + key + "/SpriteSheet.png"
 		if !ResourceLoader.exists(tex_path):
 			tex_path = MONSTER_BASE_PATH + key + "/" + key + ".png"
 		if !ResourceLoader.exists(tex_path):
-			# Try lowercase
 			tex_path = MONSTER_BASE_PATH + key + "/" + key.to_lower() + ".png"
+		if !ResourceLoader.exists(tex_path):
+			# key 含空白或特殊字元，嘗試去除空白
+			var clean_key = key.replace(" ", "")
+			tex_path = MONSTER_BASE_PATH + key + "/" + clean_key + ".png"
 		if ResourceLoader.exists(tex_path):
 			monster.sprite.texture = load(tex_path)
+		else:
+			push_warning("[Spawn] Monster %s has no loadable texture at %s" % [key, tex_path])
 
 		# Update detection area radius
 		var detect_shape = monster.get_node("DetectionArea/DetectionShape")

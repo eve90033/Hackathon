@@ -14,6 +14,10 @@ var selected_index := 0
 var preview_direction := 0
 var preview_frame := 0.0
 
+var _bgm_player: AudioStreamPlayer
+var _sfx_select: AudioStreamPlayer
+var _sfx_confirm: AudioStreamPlayer
+
 @onready var grid_container: GridContainer = $VBox/GridContainer
 @onready var preview_sprite: Sprite2D = $VBox/BottomRow/PreviewCenter/SubViewportContainer/SubViewport/PreviewSprite
 @onready var name_label: Label = $VBox/BottomRow/InfoBox/NameLabel
@@ -27,6 +31,9 @@ func _ready():
 	_build_grid()
 	_update_selection()
 	confirm_button.pressed.connect(_on_confirm)
+	_start_bgm()
+	_setup_sfx()
+	tree_exiting.connect(_stop_bgm)
 	# Auto-select for testing
 	if "--auto-login" in OS.get_cmdline_user_args():
 		get_tree().create_timer(0.5).timeout.connect(func():
@@ -76,8 +83,11 @@ func _build_grid():
 
 func _on_cell_input(event: InputEvent, index: int):
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		selected_index = index
-		_update_selection()
+		if selected_index != index:
+			selected_index = index
+			_update_selection()
+			if _sfx_select:
+				_sfx_select.play()
 
 
 func _update_selection():
@@ -148,6 +158,8 @@ func _on_confirm():
 		if _is_name_taken(player_name):
 			hint_label.text = "此暱稱已被使用！"
 			return
+		if _sfx_confirm:
+			_sfx_confirm.play()
 		character_created.emit(player_name, character_list[selected_index])
 
 
@@ -165,6 +177,8 @@ func _is_name_taken(pname: String) -> bool:
 func _on_name_check_result(ok: bool, reason: String):
 	confirm_button.disabled = false
 	if ok:
+		if _sfx_confirm:
+			_sfx_confirm.play()
 		character_created.emit(name_edit.text.strip_edges(), character_list[selected_index])
 	else:
 		hint_label.text = reason
@@ -186,3 +200,41 @@ func _unhandled_input(event):
 	elif event.is_action_pressed("move_down"):
 		selected_index = min(character_list.size() - 1, selected_index + GRID_COLS)
 		_update_selection()
+
+
+func _start_bgm():
+	_bgm_player = AudioStreamPlayer.new()
+	var stream = load("res://audio/music/adventure_begin.ogg")
+	if stream:
+		stream.loop = true
+		_bgm_player.stream = stream
+		_bgm_player.volume_db = -8.0
+		add_child(_bgm_player)
+		# 漸入
+		_bgm_player.volume_db = -30.0
+		_bgm_player.play()
+		var tween = create_tween()
+		tween.tween_property(_bgm_player, "volume_db", -8.0, 1.2)
+
+
+func _stop_bgm():
+	if _bgm_player and is_instance_valid(_bgm_player):
+		_bgm_player.stop()
+
+
+func _setup_sfx():
+	# 選角 click 音
+	_sfx_select = AudioStreamPlayer.new()
+	var click_stream = load("res://assets/Audio/Sounds/Bonus/Coin.wav")
+	if click_stream:
+		_sfx_select.stream = click_stream
+		_sfx_select.volume_db = -10.0
+		add_child(_sfx_select)
+
+	# 確認「開始冒險」音
+	_sfx_confirm = AudioStreamPlayer.new()
+	var confirm_stream = load("res://assets/Audio/Sounds/Bonus/PowerUp2.wav")
+	if confirm_stream:
+		_sfx_confirm.stream = confirm_stream
+		_sfx_confirm.volume_db = -6.0
+		add_child(_sfx_confirm)

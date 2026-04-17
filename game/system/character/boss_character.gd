@@ -29,6 +29,9 @@ var move_vector := Vector2.ZERO:
 		if move_vector.length():
 			sprite.direction = move_vector.normalized()
 
+# Snapshot interpolation target (server writes, client lerps visual toward it).
+var target_position := Vector2.ZERO
+
 var boss_state := BossState.IDLE
 var hp: int
 var target: Node2D
@@ -86,6 +89,7 @@ func _ready():
 
 	hp = max_hp
 	home_position = global_position
+	target_position = global_position
 	add_to_group("boss")
 	add_to_group("monster")
 
@@ -208,6 +212,8 @@ func _physics_process(delta: float):
 			velocity = Vector2.ZERO
 
 	move_and_slide()
+	# Publish snapshot target for client interpolation
+	target_position = global_position
 	_prev_boss_state = boss_state
 
 
@@ -259,8 +265,13 @@ func _process_client(delta: float):
 			sprite.modulate = Color.WHITE
 
 	_prev_boss_state = boss_state
-	velocity = velocity.move_toward(move_vector * speed * speed_mult, acceleration * delta)
-	move_and_slide()
+	# Snapshot interpolation toward server's target_position (replaces move_and_slide
+	# that was fighting position-sync packets). Snap if teleport-sized delta.
+	var to_target = target_position - global_position
+	if to_target.length() > 256.0:
+		global_position = target_position
+	else:
+		global_position = global_position.lerp(target_position, clamp(delta * 15.0, 0.0, 1.0))
 	_update_hp_bar()
 
 
@@ -343,7 +354,7 @@ func _process_attack(delta: float):
 				damage_area.monitoring = true
 			if _valid_target():
 				var lunge_dir = global_position.direction_to(target.global_position)
-				velocity = lunge_dir * speed * 5.0 * speed_mult
+				velocity = lunge_dir * speed * 2.8 * speed_mult  # Boss 衝刺（降低以減少 client/server 位置落差）
 	elif attack_phase == 1:
 		# 衝刺階段
 		if state_timer >= lunge_dur:
@@ -355,7 +366,7 @@ func _process_attack(delta: float):
 			var retreat_dir = global_position.direction_to(home_position)
 			if retreat_dir.length() < 0.1:
 				retreat_dir = -sprite.direction
-			velocity = retreat_dir * speed * 2.5
+			velocity = retreat_dir * speed * 1.5  # Boss 後退（降低）
 	elif attack_phase == 2:
 		# 後退階段
 		if state_timer >= retreat_dur:
@@ -384,6 +395,8 @@ func _process_jump_attack(delta: float):
 			tw.tween_callback(func():
 				if !is_instance_valid(self) or !is_inside_tree():
 					return
+				if boss_state == BossState.DEAD:
+					return  # boss died mid-jump; don't resurrect with AoE/state transition
 				# 落地 AoE 傷害
 				sprite.scale = Vector2(1.3, 0.8)
 				if damage_area:
@@ -398,6 +411,8 @@ func _process_jump_attack(delta: float):
 				tw2.tween_callback(func():
 					if !is_instance_valid(self) or !is_inside_tree():
 						return
+					if boss_state == BossState.DEAD:
+						return  # died during AoE landing phase; stay dead
 					if damage_area:
 						damage_area.monitoring = false
 					sprite.scale = Vector2(1.0, 1.0)
@@ -461,6 +476,9 @@ func _play_intro():
 
 
 # === 傷害處理 ===
+# Track who landed the killing blow (for death broadcast)
+var _last_attacker_display_name := ""
+
 func _on_damage_received(damage: ResourceDamage, at_pos: Vector2):
 	if boss_state == BossState.DEAD:
 		return
@@ -469,6 +487,14 @@ func _on_damage_received(damage: ResourceDamage, at_pos: Vector2):
 		_rpc_boss_hit.rpc_id(1, at_pos)
 		return
 
+	# Single-player or host: attacker is the local player
+	var local_name := ""
+	var world_node = get_parent()
+	if world_node:
+		var host_player = world_node.get_node_or_null("PlayerContainer/Player_1")
+		if host_player and host_player is NetworkCharacter:
+			local_name = host_player.player_name
+	_last_attacker_display_name = local_name
 	_apply_damage(damage.amount, at_pos)
 
 
@@ -489,6 +515,7 @@ func _rpc_boss_hit(at_pos: Vector2):
 	if attacker.global_position.distance_to(global_position) > 60:
 		return
 	var dmg = attacker.attack_damage
+	_last_attacker_display_name = attacker.player_name
 	_apply_damage(dmg, at_pos)
 	_rpc_hit_fx.rpc()
 
@@ -502,6 +529,10 @@ func _rpc_hit_fx():
 
 
 func _apply_damage(amount: int, at_pos: Vector2):
+	# Guard against double-death when tween callbacks or residual hits fire
+	# after boss already died.
+	if boss_state == BossState.DEAD:
+		return
 	hp -= amount
 	_update_hp_bar()
 
@@ -536,14 +567,18 @@ func _die():
 	# 給所有附近玩家 XP
 	_give_xp_to_all()
 
-	# 廣播死亡效果
+	# 廣播死亡效果 + 擊殺通知（全體 client 看到是誰打倒了 Boss）
 	if _is_multiplayer():
 		_rpc_die_fx.rpc()
+		_rpc_boss_kill_notice.rpc(_last_attacker_display_name, "巨蛙王")
+	else:
+		# 單人模式：本地直接顯示
+		_show_kill_notice(_last_attacker_display_name, "巨蛙王")
 
-	# 死亡動畫：白閃→灰階停留 5 秒→淡出
+	# 死亡動畫：白閃→灰階停留 1.5 秒→淡出（總 2.3s）
 	var tw = create_tween()
 	tw.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
-	tw.tween_interval(5.0)
+	tw.tween_interval(1.5)
 	tw.tween_property(sprite, "modulate:a", 0.0, 0.5)
 	tw.tween_callback(_hide_and_reset)
 
@@ -555,8 +590,33 @@ func _rpc_die_fx():
 	sprite.modulate = Color(5, 5, 5)
 	var tw = create_tween()
 	tw.tween_property(sprite, "modulate", Color(0.5, 0.5, 0.5), 0.3)
-	tw.tween_interval(5.0)
+	tw.tween_interval(1.5)
 	tw.tween_property(sprite, "modulate:a", 0.0, 0.5)
+	# Disable client-side collision so projectiles/attacks don't hit invisible corpse
+	set_deferred("collision_layer", 0)
+	set_deferred("collision_mask", 0)
+	if hitbox:
+		hitbox.monitorable = false
+	if damage_area:
+		damage_area.monitoring = false
+
+
+@rpc("authority", "call_local", "reliable")
+func _rpc_boss_kill_notice(killer_name: String, boss_name: String):
+	## 所有 client + server 都收到，server 端靜默（headless 無 UI）
+	_show_kill_notice(killer_name, boss_name)
+
+
+func _show_kill_notice(killer_name: String, boss_name: String):
+	var ui = get_node_or_null("/root/UIManager")
+	if !ui or !ui.has_method("push_notify"):
+		return
+	var msg := ""
+	if killer_name == "":
+		msg = "%s 被擊敗了！" % boss_name
+	else:
+		msg = "%s 擊敗了 %s！" % [killer_name, boss_name]
+	ui.push_notify(msg, Color(1.0, 0.85, 0.2), 5.0, "")
 
 
 func _give_xp_to_all():
@@ -606,6 +666,7 @@ func _respawn():
 	attack_count = 0
 	intro_played = false
 	global_position = home_position
+	target_position = home_position  # keep client snapshot in sync immediately
 	visible = true
 	set_deferred("collision_layer", 2)
 	set_deferred("collision_mask", 1)
@@ -616,6 +677,24 @@ func _respawn():
 		hitbox.monitorable = true
 	target = null
 	_update_hp_bar()
+	# Notify clients to restore visuals (modulate/scale not in sync config,
+	# and snap position to avoid "flash at death spot" bug)
+	if _is_multiplayer():
+		_rpc_respawn_fx.rpc(home_position)
+
+
+@rpc("authority", "reliable")
+func _rpc_respawn_fx(pos: Vector2):
+	global_position = pos
+	target_position = pos
+	visible = true
+	sprite.modulate = Color.WHITE
+	sprite.modulate.a = 1.0
+	sprite.scale = Vector2(1.0, 1.0)
+	set_deferred("collision_layer", 2)
+	set_deferred("collision_mask", 1)
+	if hitbox:
+		hitbox.monitorable = true
 
 
 # === TPK 處理：所有玩家死亡 ===

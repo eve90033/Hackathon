@@ -14,6 +14,9 @@ var move_vector := Vector2.ZERO:
 		if move_vector.length():
 			sprite.direction = move_vector.normalized()
 
+# Snapshot interpolation target (server writes, client lerps visual toward it)
+var target_position := Vector2.ZERO
+
 # 巡邏相關
 var patrol_points: Array[Vector2] = []
 var patrol_index := 0
@@ -37,6 +40,7 @@ func _ready():
 	if Engine.is_editor_hint():
 		return
 	home_position = global_position
+	target_position = global_position  # init so clients don't lerp from (0,0)
 	# 載入角色外觀
 	var tex_path = "res://assets/Actor/Character/%s/SpriteSheet.png" % character_key
 	if ResourceLoader.exists(tex_path):
@@ -68,14 +72,17 @@ func _physics_process(delta):
 		_show_random_emote()
 
 	if !_is_server():
-		# Client：只渲染同步的位置和動畫
+		# Client: animation from synced move_vector, position from snapshot interp
 		if move_vector.length():
 			sprite.anim = SpriteCharacter.Anim.MOVING
 			sprite.direction = move_vector.normalized()
 		else:
 			sprite.anim = SpriteCharacter.Anim.IDLE
-		velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
-		move_and_slide()
+		var to_target = target_position - global_position
+		if to_target.length() > 128.0:
+			global_position = target_position
+		else:
+			global_position = global_position.lerp(target_position, clamp(delta * 15.0, 0.0, 1.0))
 		return
 
 	# Server：跑巡邏 AI
@@ -99,6 +106,8 @@ func _physics_process(delta):
 			velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
 
 	move_and_slide()
+	# Publish snapshot target for clients
+	target_position = global_position
 
 
 func _show_random_emote():

@@ -24,6 +24,23 @@ body {
 
 #canvas {
 	display: block;
+	/* Lock to dev-time viewport so pixel art stays 1:1 on desktop browsers */
+	width: 1280px;
+	height: 720px;
+	margin: auto;
+	position: absolute;
+	inset: 0;
+	image-rendering: pixelated;
+	image-rendering: crisp-edges;
+}
+
+/* Small screens (< 1280): scale down to fit window width while keeping aspect */
+@media (max-width: 1280px) {
+	#canvas {
+		width: 100vw;
+		height: calc(100vw * 9 / 16);
+		max-height: 100vh;
+	}
 }
 
 #canvas:focus {

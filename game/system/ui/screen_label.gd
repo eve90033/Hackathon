@@ -47,6 +47,10 @@ func _init_label(parent: Node2D, text: String, font_size: int, color: Color, off
 
 	_label = Label.new()
 	_label.text = text
+	# Explicitly apply NotoSansTC font (CanvasLayer doesn't inherit theme from Control root)
+	var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+	if cjk_font:
+		_label.add_theme_font_override("font", cjk_font)
 	_label.add_theme_font_size_override("font_size", font_size)
 	_label.add_theme_color_override("font_color", color)
 	_label.add_theme_color_override("font_shadow_color", Color.BLACK)

@@ -68,6 +68,9 @@ func _build_notify_ui():
 
 	_notify_label = Label.new()
 	_notify_label.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+	if cjk_font:
+		_notify_label.add_theme_font_override("font", cjk_font)
 	_notify_label.add_theme_font_size_override("font_size", 14)
 	_notify_label.add_theme_color_override("font_color", Color.WHITE)
 	_notify_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

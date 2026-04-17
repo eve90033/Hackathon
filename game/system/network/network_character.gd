@@ -2,6 +2,9 @@ extends Character
 class_name NetworkCharacter
 
 
+signal weapon_changed(weapon_key: String)
+
+
 const CHARACTERS_PATH := "res://assets/Actor/Character/"
 const WEAPON_SCENE := preload("res://system/weapon/weapon.tscn")
 const CLUB_RESOURCE := preload("res://content/weapon/club/club.tres")
@@ -50,6 +53,8 @@ func _enter_tree():
 
 
 func _ready():
+	# Init snapshot target so remote peers don't lerp from (0,0)
+	target_position = global_position
 
 	# Apply character skin
 	var sprite_path = CHARACTERS_PATH + character_key + "/SpriteSheet.png"
@@ -91,6 +96,9 @@ func _setup_screen_name_label():
 
 	_name_screen_label = Label.new()
 	_name_screen_label.text = player_name
+	var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+	if cjk_font:
+		_name_screen_label.add_theme_font_override("font", cjk_font)
 	_name_screen_label.add_theme_font_size_override("font_size", 14)
 	_name_screen_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
 	_name_screen_label.add_theme_color_override("font_shadow_color", Color.BLACK)
@@ -151,8 +159,9 @@ var _remote_prev_state := State.IDLE
 
 func _physics_process(delta: float) -> void:
 	if !is_multiplayer_authority():
-		# Remote player: apply synced animation from state
-		# Detect attack start for weapon visual
+		# Remote player: drive animation from synced state + smoothly interpolate
+		# visible position toward authority's target_position. No client physics —
+		# that was fighting the position packets and causing the freeze/jitter.
 		if state == State.ATTACK and _remote_prev_state != State.ATTACK:
 			sprite.anim = SpriteCharacter.Anim.ATTACK
 			if weapon_node:
@@ -174,12 +183,19 @@ func _physics_process(delta: float) -> void:
 					sprite.direction = move_vector.normalized()
 				else:
 					sprite.anim = SpriteCharacter.Anim.IDLE
-		velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
-		move_and_slide()
+
+		# Snapshot interpolation toward authority's target
+		var to_target = target_position - global_position
+		if to_target.length() > 256.0:
+			# Teleport / respawn — snap, don't slide across the map
+			global_position = target_position
+		else:
+			global_position = global_position.lerp(target_position, clamp(delta * 15.0, 0.0, 1.0))
 		return
 
-	# Local player: full combat physics
+	# Local player: full combat physics, then publish snapshot for others
 	super._physics_process(delta)
+	target_position = global_position
 
 
 func _on_weapon_hit(_area):
@@ -256,9 +272,13 @@ func _rpc_hp_update(new_hp: int, new_max: int, is_dead: bool, from_pos: Vector2)
 
 # --- 回血同步（不觸發受傷閃爍）---
 
-@rpc("authority", "reliable")
+# "any_peer" because server (peer=1) is NOT this node's authority (client is).
+# Authority-mode RPC would be rejected by Godot. We still only trust the server at runtime.
+@rpc("any_peer", "reliable")
 func _rpc_heal_sync(new_hp: int, new_max: int):
-	# 只接受 server 的回血同步
+	var sender = multiplayer.get_remote_sender_id()
+	if sender != 1:
+		return  # only trust the server
 	if resource_life:
 		resource_life.max_life = new_max
 		resource_life.life = new_hp
@@ -270,6 +290,7 @@ func change_weapon(weapon_key: String):
 	## 切換武器並同步給所有 client
 	current_weapon_key = weapon_key
 	_apply_weapon(weapon_key)
+	weapon_changed.emit(weapon_key)
 	if multiplayer.has_multiplayer_peer():
 		_rpc_weapon_changed.rpc(weapon_key)
 
@@ -282,6 +303,11 @@ func _rpc_weapon_changed(weapon_key: String):
 		return
 	current_weapon_key = weapon_key
 	_apply_weapon(weapon_key)
+
+
+# Snapshot interpolation: authority writes target_position, remote peers lerp to it.
+# Replaces direct position sync so remote rendering doesn't fight client physics.
+var target_position := Vector2.ZERO
 
 
 func _apply_weapon(weapon_key: String):
@@ -384,8 +410,30 @@ func add_xp(amount: int):
 		_rpc_level_sync.rpc(level)
 
 
+## Server-only. Apply saved state to this character AFTER _ready defaults have run,
+## then broadcast to all clients so they match. Called via call_deferred from
+## world._spawn_player_func when a peer has save data.
+func _apply_server_restore(save: Dictionary) -> void:
+	if !multiplayer.is_server():
+		return
+	if save.has("level") and save["level"] > 1:
+		var lvl = int(save["level"])
+		level = lvl
+		attack_damage = ATK_PER_LEVEL[lvl - 1]
+		if resource_life:
+			resource_life.max_life = HP_PER_LEVEL[lvl - 1]
+			resource_life.life = resource_life.max_life
+		# Tell every peer (including this player's own client) — overrides the
+		# client's local _load_player_data if it ran, or primes it if it didn't.
+		if multiplayer.has_multiplayer_peer():
+			_rpc_level_sync.rpc(lvl, false)  # no FX
+	if save.has("xp"):
+		xp = int(save["xp"])
+	# Weapon restore is handled client-side (owning peer is weapon authority).
+
+
 @rpc("any_peer", "reliable")
-func _rpc_level_sync(new_level: int):
+func _rpc_level_sync(new_level: int, show_fx: bool = true):
 	# 同步等級 + HP上限 + ATK（包含自己的 client）
 	if new_level > level:
 		level = new_level
@@ -393,7 +441,8 @@ func _rpc_level_sync(new_level: int):
 		if resource_life:
 			resource_life.max_life = HP_PER_LEVEL[level - 1]
 			resource_life.life = resource_life.max_life  # 滿血
-		_show_levelup_fx()
+		if show_fx:
+			_show_levelup_fx()
 
 
 # --- 聊天同步 ---
