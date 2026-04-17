@@ -2,6 +2,27 @@
 game/.godot/
 game/*.tmp
 game/screenshot_*.png
+game/build/
+
+# Dev screenshots (root)
+screenshot_*.png
+
+# Slide / pitch deck build artifacts (local only)
+*.pptx
+slide_assets/
+build_slides.py
+build_expanded_slides.py
+fill_template.py
+inspect_template.py
+read_template.py
+make_monster_grid.py
+make_qr.py
+
+# Windows crash dumps
+*.stackdump
+
+# Claude Code local settings
+.claude/
 
 # OS
 .DS_Store
@@ -20,3 +41,4 @@ node_modules/
 # IDE
 .vscode/
 *.swp
+.gstack/
