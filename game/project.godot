@@ -22,6 +22,11 @@ ScreenShot="*res://screenshot.gd"
 NetworkManager="*res://system/network/network_manager.gd"
 UIManager="*res://system/ui/ui_manager.gd"
 GoogleAuth="*res://system/network/google_auth.gd"
+NetworkTime="*res://addons/netfox/network-time.gd"
+NetworkTimeSynchronizer="*res://addons/netfox/network-time-synchronizer.gd"
+NetworkRollback="*res://addons/netfox/rollback/network-rollback.gd"
+NetworkEvents="*res://addons/netfox/network-events.gd"
+NetworkPerformance="*res://addons/netfox/network-performance.gd"
 
 [display]
 
@@ -29,6 +34,10 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="viewport"
 window/vsync/vsync_mode=0
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/netfox.internals/plugin.cfg", "res://addons/netfox/plugin.cfg")
 
 [file_customization]
 
