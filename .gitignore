@@ -18,6 +18,20 @@ read_template.py
 make_monster_grid.py
 make_qr.py
 
+# Demo presentation (local only, not in git)
+DEMO.md
+DEMO_CONTENT.md
+DEMO_SCRIPT.md
+_demo_qr.png
+_demo_preview/
+_demo_sprites/
+_pptx_media/
+_pptx_content.txt
+_build_demo_pptx.py
+
+# Office lock files
+.~lock.*#
+
 # Windows crash dumps
 *.stackdump
 
