@@ -59,6 +59,23 @@ func _deferred_work(target_peer: int):
     ...
 ```
 
+### Rule F：Netfox StateSync + TickInterp 規則（2026-04-18 遷移後）
+
+專案已從 `MultiplayerSynchronizer` 改用 Netfox。動同步前必讀：
+
+1. **不要在兩個地方同時寫同一個 property**。StateSync 捕捉屬性寫進 history，TickInterp 在 `_process` 插值寫回 property。若 `_physics_process` 或其他 handler 也改同屬性，會跟 TickInterp 打架
+2. **Authority peer 必須 queue_free TickInterp**（只有 `_server_tick` 純 tick-based 的實體例外，如 Animal）。Pattern：
+   ```gdscript
+   if is_multiplayer_authority():  # 或 _is_server()
+       if has_node("TickInterp"):
+           $TickInterp.queue_free()
+   ```
+3. **CharacterBody2D + move_and_slide**：AI 決策放 `NetworkTime.on_tick` (30Hz)，`move_and_slide` + 邊界 clamp 留 `_physics_process` (60Hz)。不要把 move_and_slide 放進 on_tick（它用 physics delta，不配合會變半速）
+4. **Respawn / teleport** 必呼叫 `$TickInterp.teleport()`（如果 node 存在），避免遠端從舊位置滑行
+5. **不要寫 `target_position` 這種 proxy 變數**。直接同步 `position`；TickInterp 和 StateSync 分工處理平滑 + 廣播
+6. **NetworkTime.tickrate 預設 30Hz**，比舊 MP-Sync 20Hz 高 50%。流量 + CPU 多一點，jitter 容忍度也高
+7. **WebSocket on TCP，Netfox `unreliable_ordered` hint 在這裡沒意義**。Netfox 修 rubber-band 靠 history buffer 按 tick 排序，不是靠 unreliable
+
 ## 截圖驗證標準
 - 截圖後必須認真確認畫面內容是否正確，不能只看「有東西在渲染」就說正常
 - UI 元素太小（<20px）時，不能從全畫面截圖判斷是否正確，必須放大或加 debug 輸出確認
@@ -73,9 +90,9 @@ MMO Lite 即時動作 RPG + 怪獸收集，基於 NinjaAdventure 開源 Godot �
 
 ## 技術棧
 - 引擎：Godot 4.3，GDScript
-- 多人：Godot ENet（MultiplayerSynchronizer + MultiplayerSpawner + @rpc）
+- 多人：**Netfox 1.35.3** StateSync + TickInterpolator（取代內建 MP-Sync）+ MultiplayerSpawner + @rpc，WebSocket 傳輸
 - 素材：Ninja Adventure Asset Pack (CC0 授權)
-- 設計文件：DESIGN_SUPPLEMENT.md（完整規格）
+- 設計文件：DESIGN_SUPPLEMENT.md（完整規格）、NETFOX_NOTES.md（Netfox API 筆記）、SYNC_INVENTORY.md（sync 清單）
 
 ## 目錄結構
 

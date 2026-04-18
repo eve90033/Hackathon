@@ -1,25 +1,29 @@
 # SYNC_INVENTORY — Monster RPG 多人同步清單
 
-**每次動 MultiplayerSynchronizer / @rpc 前，先讀這份、改完再更新這份。**
+**每次動 sync node（StateSync / TickInterp / MultiplayerSpawner）或 @rpc 前，先讀這份、改完再更新這份。**
+
+**2026-04-18 重大改動**：MultiplayerSynchronizer 全面改用 Netfox StateSync + TickInterpolator（Path B，扣 RollbackSync）。詳見 `NETFOX_MIGRATION_PLAN.md` + `NETFOX_NOTES.md`。
 
 ---
 
 ## 實體 Sync Topology
 
-| 實體 | Spawn 方式 | Authority | MultiplayerSynchronizer 同步的 property | 備註 |
-|------|---------|-----------|----------------------------|------|
-| **NetworkCharacter** | MultiplayerSpawner (PlayerSpawner) | 對應 client peer_id | `target_position`(ALWAYS) / `move_vector,state,character_key`(ON_CHANGE) / `player_name,peer_id`(SPAWN) | 玩家，snapshot interp |
-| **MonsterCharacter** | 各 peer 本地 (`world._spawn_monsters`) | Server (1) | `target_position`(ALWAYS) / `ai_state,hp,move_vector,visible`(ON_CHANGE) | snapshot interp |
-| **BossCharacter** | 各 peer 本地 | Server (1) | `target_position`(ALWAYS) / `boss_state,hp,move_vector,visible`(ON_CHANGE) | snapshot interp |
-| **Animal** | 各 peer 本地 (`world._spawn_animals`) | Server (1) | `target_position`(ALWAYS) / `move_vector`(ON_CHANGE) | snapshot interp |
-| **NPCCharacter** | **只 client 本地**（`world._spawn_npcs`，server 不跑 spawn） | Server (1) | `target_position`(ALWAYS) / `move_vector`(ON_CHANGE) | server 跑 AI，client lerp |
-| **Companion** | RPC `NetworkManager.sync_companion` 各 peer 本地 | 無 | **無同步**（各 peer 自跑 physics） | AI 漂移可接受，視覺 OK |
-| **HP Pickup** | RPC `monster._rpc_spawn_hp` (call_local) 各 peer | Server (1) | 無 | 名字 `HP_<monster>_<drop_id>` 確定性；server 獨占 collision check |
+| 實體 | Spawn 方式 | Authority | Netfox StateSync properties | TickInterp | 備註 |
+|------|---------|-----------|----------------------------|-----------|------|
+| **NetworkCharacter** | MultiplayerSpawner (PlayerSpawner) | 對應 client peer_id | `position, move_vector, state, character_key, player_name, peer_id` | `position` (authority queue_free) | 玩家，authority 跑 60Hz physics；remote TickInterp 平滑 |
+| **MonsterCharacter** | 各 peer 本地 (`world._spawn_monsters`) | Server (1) | `position, ai_state, hp, move_vector, visible` | `position` (authority queue_free) | AI 30Hz (on_tick)，physics 60Hz |
+| **BossCharacter** | 各 peer 本地 | Server (1) | `position, boss_state, hp, move_vector, visible` | `position` (authority queue_free) | 同 Monster |
+| **Animal** | 各 peer 本地 (`world._spawn_animals`) | Server (1) | `position, move_vector` | `position` | 純 tick-based（無 move_and_slide，server AI 跑 on_tick） |
+| **NPCCharacter** | **只 client 本地**（`world._spawn_npcs`，server 不跑 spawn） | Server (1) | `position, move_vector` | `position` (authority queue_free) | server 跑 patrol AI on_tick，physics 60Hz |
+| **Companion** | RPC `NetworkManager.sync_companion` 各 peer 本地 | 無 | **無同步**（各 peer 自跑 physics） | — | AI 漂移可接受，視覺 OK |
+| **HP Pickup** | RPC `monster._rpc_spawn_hp` (call_local) 各 peer | Server (1) | 無 | — | 名字 `HP_<monster>_<drop_id>` 確定性；server 獨占 collision check |
 
-**snapshot interp 演算法**（所有用 target_position 的實體）：
-- Server: `move_and_slide()` 後 `target_position = global_position`
-- Client: `global_position.lerp(target_position, delta * 15.0)`；若 `|target - pos| > 閾值(128~256)` 則 snap
-- Replication: `replication_interval=0.05, delta_interval=0.05` (20Hz)
+**Netfox sync 運作**：
+- Authority 寫 `position`（via physics 或 on_tick）；StateSync 每 NetworkTime.after_tick 捕捉並 broadcast 給所有 peer
+- Remote 收 packet，存 history buffer（按 tick 標籤），`_after_tick` 時 apply 對應 tick 的 snapshot
+- Remote 的 TickInterp 在 `_process` 讀兩個連續 tick snapshot，用 `NetworkTime.tick_factor` 插值 → 視覺平滑
+- **Tickrate 30Hz**（`netfox/time/tickrate` 專案設定）；比舊 MP-Sync 的 20Hz 高 50%
+- Respawn / teleport 呼叫 `$TickInterp.teleport()` 避免視覺滑行
 
 ---
 
@@ -100,3 +104,4 @@
 
 - 2026-04-17 初版（完整審計後）
 - 2026-04-17 動完 sync 的實作請務必更新此表 ← 常態
+- 2026-04-18 MP-Sync → Netfox StateSync + TickInterp 遷移（Path B，扣 RollbackSync + LagComp）
