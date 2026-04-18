@@ -35,8 +35,9 @@ var move_vector := Vector2.ZERO:
 			sprite.direction = move_vector.normalized()
 
 # Snapshot interpolation target (server writes, client lerps visual toward it).
-# Replaces direct position sync so client-side physics and server packets don't fight.
-var target_position := Vector2.ZERO
+# Position synced directly via Netfox StateSynchronizer + TickInterpolator (see .tscn).
+# Authority (server) writes global_position in _physics_process via move_and_slide.
+# Remote peers see smooth interpolation handled by TickInterpolator automatically.
 
 var ai_state := AIState.IDLE
 var hp:int
@@ -83,12 +84,19 @@ func _ready():
 		return
 	hp = max_hp
 	home_position = global_position
-	target_position = global_position  # init so clients don't slide from (0,0)
 	add_to_group("monster")
 
 	# Server is authority for all monsters
 	if _is_multiplayer():
 		set_multiplayer_authority(1)
+
+	# Netfox wiring: server-side tick-based AI (30Hz), physics stays 60Hz
+	if _is_server():
+		NetworkTime.on_tick.connect(_server_tick)
+		# Authority: free TickInterp so 60Hz _physics_process doesn't fight
+		# state rewinding in before/after_tick_loop
+		if has_node("TickInterp"):
+			$TickInterp.queue_free()
 
 	# 跟牆壁碰撞，不跟玩家碰撞
 	set_collision_mask_value(2, false)
@@ -138,26 +146,32 @@ func _physics_process(delta:float):
 	if Engine.is_editor_hint():
 		return
 
-	# Client-only: render synced state
+	# Client-only: render synced state (position interp handled by TickInterpolator)
 	if _is_multiplayer() and !_is_server():
 		_process_client(delta)
 		return
 
-	# Server / single-player: full AI
-	# Capture cooldown
+	# Server: physics at 60Hz (move_and_slide + boundary clamp)
+	# AI decisions + velocity updates happen in _server_tick (30Hz via NetworkTime).
+	# Only visual decay timers stay here at physics rate.
 	if capture_cooldown > 0:
 		capture_cooldown -= delta
 
-	# Flash fade
 	if flash_timer > 0:
 		flash_timer -= delta
 		if flash_timer <= 0:
 			sprite.modulate = Color.WHITE
 
-	# Push decay
-	if push_velocity.length() > 0:
-		push_velocity = push_velocity.move_toward(Vector2.ZERO, 400*delta)
+	move_and_slide()
+	# 地圖邊界限制
+	global_position.x = clamp(global_position.x, -480.0, 850.0)
+	global_position.y = clamp(global_position.y, -800.0, 480.0)
 
+
+# Server-only tick-based AI. Runs at NetworkTime.tickrate (30Hz by default).
+# Decides ai_state transitions + updates velocity; physics movement happens
+# in _physics_process at 60Hz using the velocity computed here.
+func _server_tick(delta: float, _tick: int) -> void:
 	match ai_state:
 		AIState.IDLE:
 			_process_idle(delta)
@@ -171,13 +185,6 @@ func _physics_process(delta:float):
 			_process_hit(delta)
 		AIState.DEAD:
 			velocity = Vector2.ZERO
-
-	move_and_slide()
-	# 地圖邊界限制
-	global_position.x = clamp(global_position.x, -480.0, 850.0)
-	global_position.y = clamp(global_position.y, -800.0, 480.0)
-	# Publish authoritative snapshot target for clients to interpolate toward
-	target_position = global_position
 
 
 var _client_attack_timer := 0.0
@@ -237,17 +244,8 @@ func _process_client(delta:float):
 			sprite.modulate = Color.WHITE
 
 	_prev_ai_state = ai_state
-
-	# Snapshot interpolation: lerp toward server's authoritative target_position.
-	# No more move_and_slide on client — that was fighting position-sync packets
-	# and causing the jitter. Snap if delta is huge (teleport/respawn).
-	var to_target = target_position - global_position
-	if to_target.length() > 128.0:
-		global_position = target_position
-	else:
-		# Critically-damped smoothing: at 60 FPS reaches ~94% of target in ~170ms,
-		# matches Valve's ~100ms interpolation horizon closely enough for hackathon.
-		global_position = global_position.lerp(target_position, clamp(delta * 15.0, 0.0, 1.0))
+	# Position interpolation handled by TickInterpolator on remote peer;
+	# no manual lerp needed here.
 
 
 func _process_idle(delta:float):
@@ -600,8 +598,7 @@ func _respawn():
 	if hitbox:
 		hitbox.monitorable = true
 	target = null
-	target_position = home_position  # keep client snapshot in sync immediately
-	# 通知 client 恢復顯示（帶 pos，避免 client 在舊死亡位置閃一下）
+	# 通知 client 恢復顯示（帶 pos + teleport() 防止 TickInterp 從死亡點滑行）
 	if _is_multiplayer():
 		_rpc_respawn_fx.rpc(home_position)
 
@@ -610,7 +607,9 @@ func _respawn():
 func _rpc_respawn_fx(pos: Vector2):
 	# Snap to home BEFORE showing — prevents "flash at death spot then disappear" bug
 	global_position = pos
-	target_position = pos
+	# Tell TickInterpolator not to slide from old death position
+	if has_node("TickInterp"):
+		$TickInterp.teleport()
 	visible = true
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0

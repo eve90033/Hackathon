@@ -88,6 +88,13 @@ tick 開始:
    - 原因：TickInterp 的 `_after_tick_loop` 會把舊 state 寫回屬性，之後 `_process` 每 frame 插值 → 若 server AI 也在 `_process` 改 position，兩邊打架
    - 正確 pattern：server AI 每 tick 改一次 position（30Hz），TickInterp 負責 tick 間的視覺插值
    - `NetworkTime.on_tick` signal 的 `delta` 是 tick 間隔（1/30 ≈ 33ms），不是 frame delta
+7. **CharacterBody2D + move_and_slide 的 hybrid pattern**：
+   - `move_and_slide()` 用物理 delta（60Hz），從 signal handler 跑會變半速
+   - 解法：AI 決策（更新 velocity、狀態切換）放 `on_tick`；`move_and_slide()` + 邊界 clamp 留 `_physics_process`
+   - **Authority peer 的 `TickInterp` 在 `_ready` 裡 queue_free** — 避免 60Hz 物理被 TickInterp clobber
+   - Remote peer 保留 TickInterp 做視覺平滑
+   - 這是 Animal（沒 move_and_slide）vs Monster/Boss/NPC（有）的分野
+8. **TickInterp.teleport()** — snap 時呼叫，跳過插值瞬間 apply（用於 respawn、tab-hide snap、巨大位移）
 
 ## 不確定 / 要實測確認的
 
