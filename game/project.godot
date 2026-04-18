@@ -111,6 +111,10 @@ companion_next={
 2d_physics/layer_4="Hitbox"
 2d_physics/layer_5="Player"
 
+[netfox]
+
+rollback/enable_diff_states=false
+
 [physics]
 
 2d/solver/solver_iterations=8

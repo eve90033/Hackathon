@@ -53,6 +53,12 @@ var monster_tier := 0  # 0=弱 1=中 2=強（world.gd 生成時設定）
 var flash_timer := 0.0
 var push_velocity := Vector2.ZERO
 
+# Aggro cooldown: after dropping target (player died / leashed), ignore new
+# detections for a few seconds so monster can walk back home without getting
+# re-aggroed by another player or the respawned target on the way.
+var _aggro_cooldown := 0.0
+const AGGRO_COOLDOWN_AFTER_DROP := 3.0
+
 @onready var sprite = $Sprite
 @onready var hitbox:Hitbox = $Hitbox
 @onready var damage_area:DamageArea = $DamageArea
@@ -106,6 +112,12 @@ func _ready():
 		# state rewinding in before/after_tick_loop
 		if has_node("TickInterp"):
 			$TickInterp.queue_free()
+		# Interest management: only sync this monster's state to peers whose
+		# player is nearby. Saves ~80% of network traffic for faraway monsters.
+		if has_node("StateSync"):
+			var vf = $StateSync.visibility_filter
+			vf.update_mode = PeerVisibilityFilter.UpdateMode.PER_TICK_LOOP
+			vf.add_visibility_filter(_filter_peer_nearby)
 
 	# 跟牆壁碰撞，不跟玩家碰撞
 	set_collision_mask_value(2, false)
@@ -181,6 +193,8 @@ func _physics_process(delta:float):
 # Decides ai_state transitions + updates velocity; physics movement happens
 # in _physics_process at 60Hz using the velocity computed here.
 func _server_tick(delta: float, _tick: int) -> void:
+	if _aggro_cooldown > 0:
+		_aggro_cooldown -= delta
 	match ai_state:
 		AIState.IDLE:
 			_process_idle(delta)
@@ -279,6 +293,7 @@ func _process_chase(delta:float):
 	if !_valid_target():
 		ai_state = AIState.IDLE
 		target = null  # 清除目標，回家
+		_aggro_cooldown = AGGRO_COOLDOWN_AFTER_DROP
 		_dash_pause_timer = 0.0
 		_dash_ready = false
 		return
@@ -287,6 +302,7 @@ func _process_chase(delta:float):
 	if global_position.distance_to(home_position) > 500:
 		ai_state = AIState.IDLE
 		target = null
+		_aggro_cooldown = AGGRO_COOLDOWN_AFTER_DROP
 		_dash_pause_timer = 0.0
 		_dash_ready = false
 		return
@@ -832,9 +848,49 @@ func _show_floating_text(text:String, color:Color):
 	tween.tween_callback(sl.queue_free)
 
 
+const VISIBILITY_RADIUS := 500.0  # 約 1.5 螢幕範圍，含緩衝
+
+
+## Server-only: release target + start aggro cooldown so the monster walks
+## home naturally without re-aggroing other players along the way.
+## Used when the target player teleported away.
+func release_target_and_cooldown() -> void:
+	if !_is_server():
+		return
+	target = null
+	ai_state = AIState.IDLE
+	velocity = Vector2.ZERO
+	move_vector = Vector2.ZERO
+	_aggro_cooldown = AGGRO_COOLDOWN_AFTER_DROP
+	_dash_pause_timer = 0.0
+	_dash_ready = false
+
+## Server-only visibility filter: only broadcast state to peers whose player
+## character is within VISIBILITY_RADIUS of this monster. Keeps far-away
+## monsters from wasting bandwidth on clients that can't see them anyway.
+func _filter_peer_nearby(peer_id: int) -> bool:
+	if peer_id == 1:
+		return true  # server itself (defensive; server is authority, shouldn't broadcast to self)
+	var world_node = get_parent()
+	if !world_node:
+		return true
+	var player = world_node.get_node_or_null("PlayerContainer/Player_%d" % peer_id)
+	if !player or !is_instance_valid(player):
+		return true  # player not spawned yet — be permissive
+	return global_position.distance_to(player.global_position) <= VISIBILITY_RADIUS
+
+
 func _on_detection_entered(body:Node2D):
 	if body.is_in_group("player"):
+		# Ignore DEAD players (they're transiting to respawn point; aggro'ing
+		# them would trigger chase along the teleport path)
+		if body is Character and body.state == Character.State.DEAD:
+			return
 		if !_valid_target():
+			# During aggro cooldown (just dropped a target) ignore detections
+			# so monster can walk home without getting re-aggroed.
+			if _aggro_cooldown > 0:
+				return
 			target = body
 			ai_state = AIState.CHASE
 

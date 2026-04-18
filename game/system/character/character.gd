@@ -291,13 +291,15 @@ func _respawn_with_smoke():
 func _respawn():
 	if resource_life:
 		resource_life.life = resource_life.max_life
+	# Move BEFORE changing state: while state==DEAD, monsters ignore this body
+	# (see monster _on_detection_entered). Prevents aggro chain along the
+	# teleport path from death point to spawn point.
+	if spawn_position != Vector2.ZERO:
+		global_position = spawn_position
 	state = State.IDLE
 	sprite.anim = SpriteCharacter.Anim.IDLE
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0
-	# Move back to spawn point
-	if spawn_position != Vector2.ZERO:
-		global_position = spawn_position
 	_start_invincibility(2.0)  # 2s invincibility after respawn
 	if is_multiplayer_authority():
 		var ui = get_node_or_null("/root/UIManager")

@@ -196,8 +196,8 @@ func _spawn_player_func(data) -> Node:
 	character.player_name = pname
 	character.character_key = char_key
 	character.name = "Player_%d" % peer_id
-	character.position = Vector2(659, -675)
-	character.spawn_position = Vector2(17, -147)
+	character.position = Vector2(659, -675)  # 出生房間（地圖內有建好的房間 tile）
+	character.spawn_position = Vector2(17, -147)  # 死後重生在村莊內
 	# Server is source of truth: apply saved level/HP on our copy so pickup
 	# heal / damage calcs use the correct cap. We deferred-call it because
 	# `_ready` (which sets default max_life=5) runs after instantiate completes.
@@ -220,9 +220,9 @@ func _setup_local_player(character):
 	if !is_instance_valid(character):
 		return
 	NetworkManager.flog("[World] _setup_local_player: before pos=%s" % str(character.global_position))
-	# 確保出生在正確位置
+	# 確保出生在正確位置（出生房間 → 走出後入村莊）
 	character.global_position = Vector2(659, -675)
-	character.spawn_position = Vector2(17, -147)
+	character.spawn_position = Vector2(17, -147)  # 死後重生在村莊內
 	camera_grid.target = character
 	camera_grid.teleport_to(character.global_position)
 	local_player = character
@@ -303,9 +303,9 @@ func _on_server_disconnected():
 
 
 # --- Tab-switch recovery (web browsers throttle rAF while a tab is hidden,
-# so MultiplayerSynchronizer packets pile up in the WebSocket queue and replay
-# as a "history rewind" on the client when the tab resumes. We fast-forward by
-# snapping every synced visible entity to its authoritative target_position.)
+# so sync packets pile up in the WebSocket queue and replay as a "history
+# rewind" when the tab resumes. With Netfox we tell TickInterp.teleport() on
+# every synced entity to skip the interpolation-catchup animation.)
 
 var _tab_was_hidden := false
 
@@ -322,36 +322,29 @@ func _notification(what:int) -> void:
 func _handle_tab_resume() -> void:
 	if NetworkManager.is_dedicated_server:
 		return
-	# Give MultiplayerSynchronizer a couple frames to drain queued packets and
-	# settle properties at the latest server state before we snap.
+	# Let StateSync drain queued packets and apply them first.
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_snap_all_to_targets()
 
 
 func _snap_all_to_targets() -> void:
-	# Remote players — local authority already has correct position.
+	# Teleport all TickInterpolators so they don't slide from stale snapshot
+	# to freshly-applied StateSync values post-tab-resume.
+	var candidates: Array = []
 	for p in get_tree().get_nodes_in_group("player"):
-		if p is NetworkCharacter and !p.is_multiplayer_authority():
-			p.global_position = p.target_position
-			p._remote_prev_state = p.state
-	# Monsters + Bosses (both in "monster" group)
+		candidates.append(p)
 	for m in get_tree().get_nodes_in_group("monster"):
-		if !("target_position" in m):
-			continue
-		m.global_position = m.target_position
-		if m is MonsterCharacter:
-			m._prev_ai_state = m.ai_state
-			m._client_attack_timer = 0.0
-		elif m is BossCharacter:
-			m._prev_boss_state = m.boss_state
-			m._client_attack_timer = 0.0
-	# Animals + NPCs are direct children of World, not in any group
+		candidates.append(m)
 	for child in get_children():
-		if child is NPCCharacter and "target_position" in child:
-			child.global_position = child.target_position
-		elif child.name.begins_with("Animal_") and "target_position" in child:
-			child.global_position = child.target_position
+		if child is NPCCharacter or child.name.begins_with("Animal_"):
+			candidates.append(child)
+	for node in candidates:
+		if not is_instance_valid(node):
+			continue
+		var ti = node.get_node_or_null("TickInterp")
+		if ti:
+			ti.teleport()
 
 
 func on_camera_animation_finished():
@@ -901,7 +894,7 @@ func _spawn_monsters():
 	# 禁止怪物出現的區域
 	var safe_zones := [
 		Rect2(-160, -220, 280, 180),     # 村莊建築區（含重生點緩衝）
-		Rect2(580, -730, 160, 120),      # 房間（出生點）區域
+		Rect2(-60, -790, 900, 670),      # 出生點→村莊走廊（無怪路徑）
 	]
 	var ring_radius := 200.0  # 起始半徑
 	var count := ALL_MONSTERS.size()
@@ -911,10 +904,13 @@ func _spawn_monsters():
 		var monster = monster_scene.instantiate()
 		monster.name = key
 
-		# Spread in expanding spiral
+		# Spread in expanding spiral; strong tier gets pushed further so
+		# players can't bump into HP 10 enemies right at village edge.
 		var ring = i / 12  # 12 monsters per ring
+		var tier = mini(ring, 2)  # 0=weak, 1=medium, 2=strong
+		var tier_offset = [0, 0, 120][tier]
 		var angle = (i % 12) * (TAU / 12) + ring * 0.5
-		var radius = ring_radius + ring * 80.0
+		var radius = ring_radius + ring * 80.0 + tier_offset
 		var pos = spawn_center + Vector2(cos(angle), sin(angle)) * radius
 		# 確保不在安全區域內
 		for safe in safe_zones:
@@ -931,7 +927,6 @@ func _spawn_monsters():
 		monster.position = pos
 
 		# Stats scale with distance from center
-		var tier = mini(ring, 2)  # 0=weak, 1=medium, 2=strong
 		monster.max_hp = [3, 5, 10][tier]
 		monster.contact_damage = [1, 2, 3][tier]
 		monster.speed = [45, 55, 60][tier]

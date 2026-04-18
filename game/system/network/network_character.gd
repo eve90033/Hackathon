@@ -88,6 +88,8 @@ func _ready():
 		# Remote peers keep TickInterp for smoothing.
 		if has_node("TickInterp"):
 			$TickInterp.queue_free()
+		# Notify server when we teleport so monsters chasing us release target
+		teleported.connect(_on_teleported)
 	elif NetworkManager.is_dedicated_server:
 		# Dedicated server: disable hitbox for remote players
 		# (monster damage to player is handled client-side)
@@ -304,6 +306,30 @@ func _rpc_weapon_changed(weapon_key: String):
 		return
 	current_weapon_key = weapon_key
 	_apply_weapon(weapon_key)
+
+
+# --- Teleport: release aggroed monsters ---
+
+## Authority-side: fires when Character.teleport() completes (via `teleported`
+## signal from base class). Notify server so it can reset monsters/bosses
+## that were chasing us.
+func _on_teleported() -> void:
+	if !multiplayer.has_multiplayer_peer():
+		return
+	_rpc_release_aggro.rpc_id(1)
+
+
+@rpc("any_peer", "reliable")
+func _rpc_release_aggro() -> void:
+	if !multiplayer.is_server():
+		return
+	# Reset any monster/boss that's targeting us so they walk home naturally
+	# (existing IDLE AI + aggro cooldown take over)
+	for m in get_tree().get_nodes_in_group("monster"):
+		if m.get("target") != self:
+			continue
+		if m.has_method("release_target_and_cooldown"):
+			m.release_target_and_cooldown()
 
 
 func _apply_weapon(weapon_key: String):

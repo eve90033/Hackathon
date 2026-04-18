@@ -112,6 +112,11 @@ func _ready():
 		NetworkTime.on_tick.connect(_server_tick)
 		if has_node("TickInterp"):
 			$TickInterp.queue_free()
+		# Interest management: only sync to peers whose player is nearby
+		if has_node("StateSync"):
+			var vf = $StateSync.visibility_filter
+			vf.update_mode = PeerVisibilityFilter.UpdateMode.PER_TICK_LOOP
+			vf.add_visibility_filter(_filter_peer_nearby)
 
 	# 碰撞設定
 	set_collision_mask_value(2, false)
@@ -774,8 +779,37 @@ func _find_nearest_player():
 		target = nearest
 
 
+const BOSS_VISIBILITY_RADIUS := 700.0  # Boss 範圍比 Monster 大（有巨型 sprite + hp 條）
+
+
+## Server-only: release target + go IDLE so boss walks home (existing _process_idle handles it)
+func release_target_and_cooldown() -> void:
+	if !_is_server():
+		return
+	target = null
+	if boss_state != BossState.DEAD:
+		boss_state = BossState.IDLE
+	velocity = Vector2.ZERO
+	move_vector = Vector2.ZERO
+
+## Server-only visibility filter for boss
+func _filter_peer_nearby(peer_id: int) -> bool:
+	if peer_id == 1:
+		return true
+	var world_node = get_parent()
+	if !world_node:
+		return true
+	var player = world_node.get_node_or_null("PlayerContainer/Player_%d" % peer_id)
+	if !player or !is_instance_valid(player):
+		return true
+	return global_position.distance_to(player.global_position) <= BOSS_VISIBILITY_RADIUS
+
+
 func _on_detection_entered(body: Node2D):
 	if body.is_in_group("player"):
+		# Ignore DEAD players (they're transiting to respawn point)
+		if body is Character and body.state == Character.State.DEAD:
+			return
 		if !_valid_target():
 			target = body
 			if boss_state == BossState.IDLE:
