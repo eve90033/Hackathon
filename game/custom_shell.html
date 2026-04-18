@@ -24,23 +24,15 @@ body {
 
 #canvas {
 	display: block;
-	/* Lock to dev-time viewport so pixel art stays 1:1 on desktop browsers */
-	width: 1280px;
-	height: 720px;
+	/* Fit to browser viewport while preserving 16:9 aspect ratio (letterbox
+	   on wider/taller screens). Internal render stays at 1280x720 viewport. */
+	width: min(100vw, calc(100vh * 16 / 9));
+	height: min(100vh, calc(100vw * 9 / 16));
 	margin: auto;
 	position: absolute;
 	inset: 0;
 	image-rendering: pixelated;
 	image-rendering: crisp-edges;
-}
-
-/* Small screens (< 1280): scale down to fit window width while keeping aspect */
-@media (max-width: 1280px) {
-	#canvas {
-		width: 100vw;
-		height: calc(100vw * 9 / 16);
-		max-height: 100vh;
-	}
 }
 
 #canvas:focus {
