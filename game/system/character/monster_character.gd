@@ -340,7 +340,7 @@ func _process_chase(delta:float):
 				_dash_pause_timer = 0.0
 				return
 
-			if dist < detection_range * 0.6:
+			if dist < detection_range * 0.3:
 				# 進入暫停蓄力階段
 				move_vector = Vector2.ZERO
 				velocity = Vector2.ZERO
