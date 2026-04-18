@@ -257,6 +257,13 @@ func _request_spawn():
 	# that can stall Godot 4's MultiplayerAPI dispatch for other peers.
 	var t := get_tree().create_timer(1.0)
 	t.timeout.connect(_send_existing_companions_to.bind(sender), CONNECT_ONE_SHOT)
+	# Also send current positions of all existing players to the new joiner.
+	# Background-throttled web peers may broadcast at ~1 Hz, so late joiners
+	# relying on StateSync alone stay at initial (659,-675) until a throttled
+	# peer sends its next tick. Server already has the cached position from
+	# its own StateSync copy — push it directly to the new peer as a seed.
+	var t2 := get_tree().create_timer(1.0)
+	t2.timeout.connect(_send_existing_player_positions_to.bind(sender), CONNECT_ONE_SHOT)
 
 
 func _send_existing_companions_to(target_peer: int) -> void:
@@ -276,6 +283,37 @@ func _send_existing_companions_to(target_peer: int) -> void:
 		var captor_name := "Player_%d" % pid
 		NetworkManager.flog("[World] Sending companion %s for %s to peer %d" % [comp_key, captor_name, target_peer])
 		NetworkManager.sync_companion.rpc_id(target_peer, captor_name, comp_key, 0)
+
+
+func _send_existing_player_positions_to(target_peer: int) -> void:
+	## Server-only: tell the new joiner where each existing player currently is.
+	## Bypasses the StateSync catch-up race for background-throttled peers.
+	if !is_instance_valid(self):
+		return
+	if !multiplayer.is_server():
+		return
+	for child in player_container.get_children():
+		if not (child is NetworkCharacter):
+			continue
+		if child.peer_id == target_peer:
+			continue  # skip the new joiner's own character
+		var pos = child.global_position
+		NetworkManager.flog("[World] Seeding pos of Player_%d (%.0f,%.0f) to peer %d" % [child.peer_id, pos.x, pos.y, target_peer])
+		_rpc_seed_player_position.rpc_id(target_peer, child.peer_id, pos.x, pos.y)
+
+
+@rpc("authority", "reliable", "call_remote")
+func _rpc_seed_player_position(peer_id: int, x: float, y: float) -> void:
+	## Received by a late-joining client: force the initial position of an
+	## existing peer's character to the server's cached value. This avoids
+	## waiting for a possibly-throttled StateSync broadcast to arrive.
+	var char_node = player_container.get_node_or_null("Player_%d" % peer_id)
+	if !char_node or !is_instance_valid(char_node):
+		return
+	char_node.global_position = Vector2(x, y)
+	var ti = char_node.get_node_or_null("TickInterp")
+	if ti and ti.has_method("teleport"):
+		ti.teleport()
 
 
 func _on_player_connected(peer_id: int):
@@ -313,15 +351,37 @@ func _notification(what:int) -> void:
 	match what:
 		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 			_tab_was_hidden = true
+			_handle_tab_hide()
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_WM_WINDOW_FOCUS_IN:
 			if _tab_was_hidden:
 				_tab_was_hidden = false
 				_handle_tab_resume()
 
 
+func _handle_tab_hide() -> void:
+	# Browser throttles backgrounded tabs to ~1 Hz. Local player's
+	# _physics_process slows accordingly; any held input keeps applying with
+	# huge delta → big position jumps visible to other peers. Proactively
+	# disable the HumanController + zero velocity so broadcast state stays
+	# still while hidden.
+	if NetworkManager.is_dedicated_server:
+		return
+	if local_player and is_instance_valid(local_player):
+		local_player.move_vector = Vector2.ZERO
+		local_player.velocity = Vector2.ZERO
+		for child in local_player.get_children():
+			if child is HumanController:
+				child.active = false
+
+
 func _handle_tab_resume() -> void:
 	if NetworkManager.is_dedicated_server:
 		return
+	# Re-enable HumanController so input works again
+	if local_player and is_instance_valid(local_player):
+		for child in local_player.get_children():
+			if child is HumanController:
+				child.active = true
 	# Let StateSync drain queued packets and apply them first.
 	await get_tree().process_frame
 	await get_tree().process_frame

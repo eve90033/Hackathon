@@ -114,6 +114,7 @@ companion_next={
 [netfox]
 
 rollback/enable_diff_states=false
+time/stall_threshold=0.5
 
 [physics]
 
