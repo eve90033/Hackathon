@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://system/character/boss_character.gd" id="1_bc"]
 [ext_resource type="Script" path="res://system/character/sprite_boss.gd" id="2_sb"]
@@ -12,6 +12,8 @@
 [ext_resource type="Texture2D" path="res://assets/Actor/Boss/GiantFrog/Attack.png" id="10_attack"]
 [ext_resource type="Texture2D" path="res://assets/Actor/Boss/GiantFrog/Jump.png" id="11_jump"]
 [ext_resource type="Texture2D" path="res://assets/Actor/Boss/GiantFrog/Hit.png" id="12_hit"]
+[ext_resource type="Script" path="res://addons/netfox/state-synchronizer.gd" id="13_state"]
+[ext_resource type="Script" path="res://addons/netfox/tick-interpolator.gd" id="14_tick"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_body"]
 radius = 10.0
@@ -82,10 +84,10 @@ monitorable = false
 [node name="DetectionShape" type="CollisionShape2D" parent="DetectionArea"]
 shape = SubResource("CircleShape2D_detect")
 
-[node name="StateSync" type="StateSynchronizer" parent="."]
-root = NodePath("..")
-properties = Array[String]([  "../:position", "../:boss_state", "../:hp", "../:move_vector", "../:visible"  ])
+[node name="StateSync" type="Node" parent="."]
+script = ExtResource("13_state")
+properties = Array[String]([  ":position", ":boss_state", ":hp", ":move_vector", ":visible"  ])
 
-[node name="TickInterp" type="TickInterpolator" parent="."]
-root = NodePath("..")
-properties = Array[String]([  "../:position"  ])
+[node name="TickInterp" type="Node" parent="."]
+script = ExtResource("14_tick")
+properties = Array[String]([  ":position"  ])

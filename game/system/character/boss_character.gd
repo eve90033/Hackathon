@@ -96,6 +96,15 @@ func _ready():
 	if _is_multiplayer():
 		set_multiplayer_authority(1)
 
+	# Netfox: explicitly set root (runtime NodePath-to-Node auto-resolution
+	# on @export var root: Node doesn't fire for manually-authored .tscn)
+	if has_node("StateSync"):
+		$StateSync.root = self
+		$StateSync.process_settings()
+	if has_node("TickInterp"):
+		$TickInterp.root = self
+		$TickInterp.process_settings()
+
 	# Netfox: server-side tick-based AI (30Hz), physics stays 60Hz.
 	# Authority peer frees TickInterp to prevent 60Hz physics from being
 	# clobbered by before/after_tick_loop state rewinds.

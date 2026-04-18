@@ -1,9 +1,11 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="PackedScene" uid="uid://skrlnoimlhsv" path="res://system/character/character.tscn" id="1_char"]
 [ext_resource type="Script" path="res://system/network/network_character.gd" id="2_net"]
 [ext_resource type="Texture2D" uid="uid://cb1puhmg81h5p" path="res://content/character/ninja_blue/sprite.png" id="3_sprite"]
 [ext_resource type="Resource" uid="uid://ujea2b11dl3n" path="res://content/team/player_team.tres" id="4_team"]
+[ext_resource type="Script" path="res://addons/netfox/state-synchronizer.gd" id="5_state"]
+[ext_resource type="Script" path="res://addons/netfox/tick-interpolator.gd" id="6_tick"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_body"]
 radius = 7.0
@@ -26,13 +28,13 @@ texture = ExtResource("3_sprite")
 position = Vector2(0, -1)
 shape = SubResource("CircleShape2D_body")
 
-[node name="StateSync" type="StateSynchronizer" parent="."]
-root = NodePath("..")
-properties = Array[String]([  "../:position", "../:move_vector", "../:state", "../:character_key", "../:player_name", "../:peer_id"  ])
+[node name="StateSync" type="Node" parent="."]
+script = ExtResource("5_state")
+properties = Array[String]([  ":position", ":move_vector", ":state", ":character_key", ":player_name", ":peer_id"  ])
 
-[node name="TickInterp" type="TickInterpolator" parent="."]
-root = NodePath("..")
-properties = Array[String]([  "../:position"  ])
+[node name="TickInterp" type="Node" parent="."]
+script = ExtResource("6_tick")
+properties = Array[String]([  ":position"  ])
 
 [node name="NameLabel" type="Label" parent="."]
 visible = false

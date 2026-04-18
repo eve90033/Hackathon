@@ -70,6 +70,15 @@ func _ready():
 	# Don't get pushed by monsters
 	set_collision_mask_value(2, false)
 
+	# Netfox: explicitly set root (runtime NodePath-to-Node auto-resolution
+	# on @export var root: Node doesn't fire for manually-authored .tscn)
+	if has_node("StateSync"):
+		$StateSync.root = self
+		$StateSync.process_settings()
+	if has_node("TickInterp"):
+		$TickInterp.root = self
+		$TickInterp.process_settings()
+
 	if is_multiplayer_authority():
 		# This is our character: add input + camera
 		var human_controller = HumanController.new()

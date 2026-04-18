@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="Script" path="res://system/character/monster_character.gd" id="1_mc"]
 [ext_resource type="Script" path="res://system/character/sprite_monster.gd" id="2_sm"]
@@ -7,6 +7,8 @@
 [ext_resource type="Script" path="res://system/damage/damage_area.gd" id="5_dmg"]
 [ext_resource type="Resource" uid="uid://b1hex3hlai17n" path="res://content/team/enemy_team.tres" id="6_enemy"]
 [ext_resource type="Script" path="res://system/damage/resource_damage.gd" id="7_resdmg"]
+[ext_resource type="Script" path="res://addons/netfox/state-synchronizer.gd" id="8_state"]
+[ext_resource type="Script" path="res://addons/netfox/tick-interpolator.gd" id="9_tick"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_body"]
 radius = 6.0
@@ -75,10 +77,10 @@ monitorable = false
 [node name="DetectionShape" type="CollisionShape2D" parent="DetectionArea"]
 shape = SubResource("CircleShape2D_detect")
 
-[node name="StateSync" type="StateSynchronizer" parent="."]
-root = NodePath("..")
-properties = Array[String]([  "../:position", "../:ai_state", "../:hp", "../:move_vector", "../:visible"  ])
+[node name="StateSync" type="Node" parent="."]
+script = ExtResource("8_state")
+properties = Array[String]([  ":position", ":ai_state", ":hp", ":move_vector", ":visible"  ])
 
-[node name="TickInterp" type="TickInterpolator" parent="."]
-root = NodePath("..")
-properties = Array[String]([  "../:position"  ])
+[node name="TickInterp" type="Node" parent="."]
+script = ExtResource("9_tick")
+properties = Array[String]([  ":position"  ])
