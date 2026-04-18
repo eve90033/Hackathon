@@ -34,6 +34,11 @@ var move_vector := Vector2.ZERO:
 		if move_vector.length():
 			sprite.direction = move_vector.normalized()
 
+# Snapshot interpolation target (server writes, client lerps visual toward it).
+# Position synced directly via Netfox StateSynchronizer + TickInterpolator (see .tscn).
+# Authority (server) writes global_position in _physics_process via move_and_slide.
+# Remote peers see smooth interpolation handled by TickInterpolator automatically.
+
 var ai_state := AIState.IDLE
 var hp:int
 var target:Node2D
@@ -47,6 +52,12 @@ var monster_tier := 0  # 0=弱 1=中 2=強（world.gd 生成時設定）
 # Damage feedback
 var flash_timer := 0.0
 var push_velocity := Vector2.ZERO
+
+# Aggro cooldown: after dropping target (player died / leashed), ignore new
+# detections for a few seconds so monster can walk back home without getting
+# re-aggroed by another player or the respawned target on the way.
+var _aggro_cooldown := 0.0
+const AGGRO_COOLDOWN_AFTER_DROP := 3.0
 
 @onready var sprite = $Sprite
 @onready var hitbox:Hitbox = $Hitbox
@@ -84,6 +95,29 @@ func _ready():
 	# Server is authority for all monsters
 	if _is_multiplayer():
 		set_multiplayer_authority(1)
+
+	# Netfox: explicitly set root (runtime NodePath-to-Node auto-resolution
+	# on @export var root: Node doesn't fire for manually-authored .tscn)
+	if has_node("StateSync"):
+		$StateSync.root = self
+		$StateSync.process_settings()
+	if has_node("TickInterp"):
+		$TickInterp.root = self
+		$TickInterp.process_settings()
+
+	# Netfox wiring: server-side tick-based AI (30Hz), physics stays 60Hz
+	if _is_server():
+		NetworkTime.on_tick.connect(_server_tick)
+		# Authority: free TickInterp so 60Hz _physics_process doesn't fight
+		# state rewinding in before/after_tick_loop
+		if has_node("TickInterp"):
+			$TickInterp.queue_free()
+		# Interest management: only sync this monster's state to peers whose
+		# player is nearby. Saves ~80% of network traffic for faraway monsters.
+		if has_node("StateSync"):
+			var vf = $StateSync.visibility_filter
+			vf.update_mode = PeerVisibilityFilter.UpdateMode.PER_TICK_LOOP
+			vf.add_visibility_filter(_filter_peer_nearby)
 
 	# 跟牆壁碰撞，不跟玩家碰撞
 	set_collision_mask_value(2, false)
@@ -133,26 +167,34 @@ func _physics_process(delta:float):
 	if Engine.is_editor_hint():
 		return
 
-	# Client-only: render synced state
+	# Client-only: render synced state (position interp handled by TickInterpolator)
 	if _is_multiplayer() and !_is_server():
 		_process_client(delta)
 		return
 
-	# Server / single-player: full AI
-	# Capture cooldown
+	# Server: physics at 60Hz (move_and_slide + boundary clamp)
+	# AI decisions + velocity updates happen in _server_tick (30Hz via NetworkTime).
+	# Only visual decay timers stay here at physics rate.
 	if capture_cooldown > 0:
 		capture_cooldown -= delta
 
-	# Flash fade
 	if flash_timer > 0:
 		flash_timer -= delta
 		if flash_timer <= 0:
 			sprite.modulate = Color.WHITE
 
-	# Push decay
-	if push_velocity.length() > 0:
-		push_velocity = push_velocity.move_toward(Vector2.ZERO, 400*delta)
+	move_and_slide()
+	# 地圖邊界限制
+	global_position.x = clamp(global_position.x, -480.0, 850.0)
+	global_position.y = clamp(global_position.y, -800.0, 480.0)
 
+
+# Server-only tick-based AI. Runs at NetworkTime.tickrate (30Hz by default).
+# Decides ai_state transitions + updates velocity; physics movement happens
+# in _physics_process at 60Hz using the velocity computed here.
+func _server_tick(delta: float, _tick: int) -> void:
+	if _aggro_cooldown > 0:
+		_aggro_cooldown -= delta
 	match ai_state:
 		AIState.IDLE:
 			_process_idle(delta)
@@ -166,11 +208,6 @@ func _physics_process(delta:float):
 			_process_hit(delta)
 		AIState.DEAD:
 			velocity = Vector2.ZERO
-
-	move_and_slide()
-	# 地圖邊界限制
-	global_position.x = clamp(global_position.x, -480.0, 850.0)
-	global_position.y = clamp(global_position.y, -800.0, 480.0)
 
 
 var _client_attack_timer := 0.0
@@ -230,10 +267,8 @@ func _process_client(delta:float):
 			sprite.modulate = Color.WHITE
 
 	_prev_ai_state = ai_state
-
-	# Interpolate position (synced via MultiplayerSynchronizer)
-	velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
-	move_and_slide()
+	# Position interpolation handled by TickInterpolator on remote peer;
+	# no manual lerp needed here.
 
 
 func _process_idle(delta:float):
@@ -258,6 +293,7 @@ func _process_chase(delta:float):
 	if !_valid_target():
 		ai_state = AIState.IDLE
 		target = null  # 清除目標，回家
+		_aggro_cooldown = AGGRO_COOLDOWN_AFTER_DROP
 		_dash_pause_timer = 0.0
 		_dash_ready = false
 		return
@@ -266,6 +302,7 @@ func _process_chase(delta:float):
 	if global_position.distance_to(home_position) > 500:
 		ai_state = AIState.IDLE
 		target = null
+		_aggro_cooldown = AGGRO_COOLDOWN_AFTER_DROP
 		_dash_pause_timer = 0.0
 		_dash_ready = false
 		return
@@ -297,7 +334,7 @@ func _process_chase(delta:float):
 			# DASH（中怪）：停頓後衝刺
 			if _dash_ready:
 				# 衝刺已就緒，直接進攻
-				velocity = dir * speed * 4.0
+				velocity = dir * speed * 2.2  # DASH 衝刺速度（降低以減少 client/server 位置落差）
 				ai_state = AIState.ATTACK
 				_dash_ready = false
 				_dash_pause_timer = 0.0
@@ -354,7 +391,7 @@ func _process_attack(delta:float):
 				damage_area.monitoring = true
 			if _valid_target():
 				var lunge_dir = global_position.direction_to(target.global_position)
-				velocity = lunge_dir * speed * 3.0
+				velocity = lunge_dir * speed * 1.8  # 攻擊衝刺速度（降低以減少 client/server 位置落差）
 	elif attack_phase == 1:
 		# Lunge over (0.15s)
 		if stun_timer >= 0.45:
@@ -368,7 +405,7 @@ func _process_attack(delta:float):
 			var retreat_dir = global_position.direction_to(home_position)
 			if retreat_dir.length() < 0.1:
 				retreat_dir = -sprite.direction
-			velocity = retreat_dir * speed * 2.5
+			velocity = retreat_dir * speed * 1.5  # 後退速度（降低以減少 client/server 位置落差）
 	elif attack_phase == 2:
 		# Retreat phase (0.3s)
 		if stun_timer >= 0.75:
@@ -438,6 +475,8 @@ func _rpc_hit_fx():
 
 
 func _apply_damage(amount: int, at_pos: Vector2):
+	if ai_state == AIState.DEAD:
+		return  # ignore residual hits after death
 	hp -= amount
 
 	# Hitstun + knockback
@@ -492,6 +531,15 @@ func _rpc_die_fx():
 	sprite.modulate = Color(5, 5, 5)
 	var tween = create_tween()
 	tween.tween_property(sprite, "modulate:a", 0.0, 0.3)
+	# Disable collision/hitbox on client too — otherwise invisible corpse still
+	# eats projectiles and attacks. collision_layer + hitbox.monitorable are not
+	# in the SceneReplicationConfig so we must set them here.
+	set_deferred("collision_layer", 0)
+	set_deferred("collision_mask", 0)
+	if hitbox:
+		hitbox.monitorable = false
+	if damage_area:
+		damage_area.monitoring = false
 
 
 func _drop_hp():
@@ -575,17 +623,27 @@ func _respawn():
 	if hitbox:
 		hitbox.monitorable = true
 	target = null
-	# 通知 client 恢復顯示
+	# 通知 client 恢復顯示（帶 pos + teleport() 防止 TickInterp 從死亡點滑行）
 	if _is_multiplayer():
-		_rpc_respawn_fx.rpc()
+		_rpc_respawn_fx.rpc(home_position)
 
 
 @rpc("authority", "reliable")
-func _rpc_respawn_fx():
+func _rpc_respawn_fx(pos: Vector2):
+	# Snap to home BEFORE showing — prevents "flash at death spot then disappear" bug
+	global_position = pos
+	# Tell TickInterpolator not to slide from old death position
+	if has_node("TickInterp"):
+		$TickInterp.teleport()
 	visible = true
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0
 	sprite.scale = Vector2(1.0, 1.0)
+	# Restore collision/hitbox to match server (they were zeroed in _rpc_die_fx)
+	set_deferred("collision_layer", 2)
+	set_deferred("collision_mask", 1)
+	if hitbox:
+		hitbox.monitorable = true
 
 
 func _valid_target() -> bool:
@@ -650,8 +708,16 @@ func _do_capture(captor: Node2D):
 	var captor_peer := 0
 	if captor is NetworkCharacter:
 		captor_peer = captor.peer_id
-	# Fail rate = current HP / max HP (lower HP = easier to capture)
-	var fail_rate = float(hp) / float(max_hp)
+	# Fail rate compensates for late-game one-shot problem: if player's attack
+	# has grown since spawn, treat the monster as if it were pre-weakened by the
+	# attack delta. Without this, high-level players can't weaken a monster to
+	# a capturable state — they one-shot it first.
+	var initial_atk: int = Character.ATK_PER_LEVEL[0]
+	var captor_atk := initial_atk
+	if captor is NetworkCharacter:
+		captor_atk = captor.attack_damage
+	var adjusted_hp = max(hp - (captor_atk - initial_atk), 0)
+	var fail_rate = float(adjusted_hp) / float(max_hp)
 	if randf() >= fail_rate:
 		_capture_success(captor)
 		if _is_multiplayer() and captor_peer > 0:
@@ -695,7 +761,22 @@ func _capture_success(captor:Node2D):
 			hitbox.monitorable = false
 		visible = false
 		monster_captured.emit(self, captor)
+		# Tell ALL clients to also disable collision (their copy is still
+		# "alive" in collision terms until we broadcast). Prevents projectiles
+		# and melee hits from landing on the invisible captured corpse.
+		if _is_multiplayer():
+			_rpc_disable_collision.rpc()
 	)
+
+
+@rpc("authority", "call_local", "reliable")
+func _rpc_disable_collision():
+	set_deferred("collision_layer", 0)
+	set_deferred("collision_mask", 0)
+	if hitbox:
+		hitbox.monitorable = false
+	if damage_area:
+		damage_area.monitoring = false
 
 
 @rpc("authority", "reliable")
@@ -767,9 +848,49 @@ func _show_floating_text(text:String, color:Color):
 	tween.tween_callback(sl.queue_free)
 
 
+const VISIBILITY_RADIUS := 500.0  # 約 1.5 螢幕範圍，含緩衝
+
+
+## Server-only: release target + start aggro cooldown so the monster walks
+## home naturally without re-aggroing other players along the way.
+## Used when the target player teleported away.
+func release_target_and_cooldown() -> void:
+	if !_is_server():
+		return
+	target = null
+	ai_state = AIState.IDLE
+	velocity = Vector2.ZERO
+	move_vector = Vector2.ZERO
+	_aggro_cooldown = AGGRO_COOLDOWN_AFTER_DROP
+	_dash_pause_timer = 0.0
+	_dash_ready = false
+
+## Server-only visibility filter: only broadcast state to peers whose player
+## character is within VISIBILITY_RADIUS of this monster. Keeps far-away
+## monsters from wasting bandwidth on clients that can't see them anyway.
+func _filter_peer_nearby(peer_id: int) -> bool:
+	if peer_id == 1:
+		return true  # server itself (defensive; server is authority, shouldn't broadcast to self)
+	var world_node = get_parent()
+	if !world_node:
+		return true
+	var player = world_node.get_node_or_null("PlayerContainer/Player_%d" % peer_id)
+	if !player or !is_instance_valid(player):
+		return true  # player not spawned yet — be permissive
+	return global_position.distance_to(player.global_position) <= VISIBILITY_RADIUS
+
+
 func _on_detection_entered(body:Node2D):
 	if body.is_in_group("player"):
+		# Ignore DEAD players (they're transiting to respawn point; aggro'ing
+		# them would trigger chase along the teleport path)
+		if body is Character and body.state == Character.State.DEAD:
+			return
 		if !_valid_target():
+			# During aggro cooldown (just dropped a target) ignore detections
+			# so monster can walk home without getting re-aggroed.
+			if _aggro_cooldown > 0:
+				return
 			target = body
 			ai_state = AIState.CHASE
 

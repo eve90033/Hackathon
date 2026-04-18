@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://system/character/boss_character.gd" id="1_bc"]
 [ext_resource type="Script" path="res://system/character/sprite_boss.gd" id="2_sb"]
@@ -12,6 +12,8 @@
 [ext_resource type="Texture2D" path="res://assets/Actor/Boss/GiantFrog/Attack.png" id="10_attack"]
 [ext_resource type="Texture2D" path="res://assets/Actor/Boss/GiantFrog/Jump.png" id="11_jump"]
 [ext_resource type="Texture2D" path="res://assets/Actor/Boss/GiantFrog/Hit.png" id="12_hit"]
+[ext_resource type="Script" path="res://addons/netfox/state-synchronizer.gd" id="13_state"]
+[ext_resource type="Script" path="res://addons/netfox/tick-interpolator.gd" id="14_tick"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_body"]
 radius = 10.0
@@ -24,23 +26,6 @@ radius = 18.0
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_detect"]
 radius = 120.0
-
-[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_bsync"]
-properties/0/path = NodePath(".:position")
-properties/0/spawn = true
-properties/0/replication_mode = 1
-properties/1/path = NodePath(".:boss_state")
-properties/1/spawn = true
-properties/1/replication_mode = 1
-properties/2/path = NodePath(".:hp")
-properties/2/spawn = true
-properties/2/replication_mode = 1
-properties/3/path = NodePath(".:move_vector")
-properties/3/spawn = true
-properties/3/replication_mode = 1
-properties/4/path = NodePath(".:visible")
-properties/4/spawn = true
-properties/4/replication_mode = 1
 
 [sub_resource type="Resource" id="Resource_dmg"]
 script = ExtResource("7_resdmg")
@@ -99,6 +84,10 @@ monitorable = false
 [node name="DetectionShape" type="CollisionShape2D" parent="DetectionArea"]
 shape = SubResource("CircleShape2D_detect")
 
-[node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
-delta_interval = 0.1
-replication_config = SubResource("SceneReplicationConfig_bsync")
+[node name="StateSync" type="Node" parent="."]
+script = ExtResource("13_state")
+properties = Array[String]([  ":position", ":boss_state", ":hp", ":move_vector", ":visible"  ])
+
+[node name="TickInterp" type="Node" parent="."]
+script = ExtResource("14_tick")
+properties = Array[String]([  ":position"  ])

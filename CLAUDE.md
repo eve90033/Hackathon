@@ -9,6 +9,73 @@
 - 同一個方法失敗 2 次就換路線，不要盲目重試
 - **Subagent 或自己寫完程式碼後，必須實際啟動遊戲抓 stdout，grep `SCRIPT ERROR` 確認零錯誤才算完成。`--editor --quit --headless` 只做 import，不能捕捉所有編譯錯誤（例如 class_name 解析失敗）。**
 - 新增 class_name 的 .gd 檔案後，其他腳本不要直接用類型名引用，改用 `preload()` + `set_script()` 避免 import 順序問題
+- **寫 report / 整理文件 / 回報進度前，必須先跑 `git log`、`git status`、讀相關檔案**。每個 claim 附證據（commit hash / file:line）。memory 可能過時，只能當參考不能當 primary source。無證據就明說「我不確定」，不要憑記憶猜。
+
+## Sync / 多人同步變更規則（避免改一個壞一個）
+
+動任何 MultiplayerSynchronizer / MultiplayerSpawner / `@rpc` 前必做：
+
+### Rule A：先讀 .gd 再碰 .tscn
+**光看 SceneReplicationConfig 不算懂**。必 grep 該實體 `.gd`：
+```bash
+grep -nE "_is_server|is_multiplayer_authority|target_position|<屬性名>" <script>.gd
+```
+確認「誰讀、誰寫」後才動 .tscn 的 sync config。**不准以為某個 Synchronizer 是死 code 就拔掉**。
+
+### Rule B：改完更新 SYNC_INVENTORY.md
+`SYNC_INVENTORY.md` 是**活文件**，每個實體的同步屬性、每條 RPC 的 mode/caller/用途都列好。改 sync/RPC 同一 commit 要更新它。
+
+### Rule C：Sync 類改動必手測 4 件事（再宣稱完成）
+1. **玩家移動雙向可見**：自己走、對方看得到；對方走、我看得到
+2. **怪物 AI**：移動、攻擊、死亡重生
+3. **NPC 巡邏**：client 端實際在動
+4. **登入還原**：level / HP / 同伴 / 武器 在對方螢幕上正確
+
+光 `grep SCRIPT ERROR = 0` **不夠**，必實機雙 client 走一遍。
+
+### Rule D：跨 authority 的 RPC 注意
+- `@rpc("authority")` = 只有 node 的 authority 能**發**此 RPC。NetworkCharacter 的 authority 是 client peer；server 要通知它時**必用 `any_peer`**（sender 內部檢查 `== 1`）
+- `call_local` = 連 caller 自己也執行，適用於 spawn 這種「所有端都要做一次」
+- `call_remote`（預設）= 跳過 caller，適用於「本地已經做了，其他人補做」
+
+### Rule E：`@rpc` handler 裡絕對不能 `await`
+RPC handler 一旦 `await`，整個 function 變成 Coroutine → **Godot 4 MultiplayerAPI 的 RPC dispatch 會卡住**，其他 peer 的 MultiplayerSpawner broadcast / MultiplayerSynchronizer 更新會有機率 race 掉，表現為：
+- 晚加入的玩家看不到早就在場的玩家
+- 位置 sync 卡在 spawn point 不更新
+- **偶發性**（跑 10 次中 1-2 次壞）
+
+踩過的坑：`_request_spawn` 裡 `await get_tree().create_timer(1.0).timeout` 延遲廣播同伴 catch-up，結果 desktop 看 web 位置卡住、web 看不到 desktop。
+
+正解：要延後執行，用 `Timer.timeout.connect()` 把 continuation 丟到外面跑：
+```gdscript
+@rpc("any_peer", "reliable")
+func _request_spawn():
+    spawner.spawn(...)                        # 立刻做
+    var t := get_tree().create_timer(1.0)
+    t.timeout.connect(_deferred_work.bind(sender), CONNECT_ONE_SHOT)
+    # handler 到此 return，不卡 dispatch
+
+func _deferred_work(target_peer: int):
+    # 1 秒後在外部 context 跑，安全
+    ...
+```
+
+### Rule F：Netfox StateSync + TickInterp 規則（2026-04-18 遷移後）
+
+專案已從 `MultiplayerSynchronizer` 改用 Netfox。動同步前必讀：
+
+1. **不要在兩個地方同時寫同一個 property**。StateSync 捕捉屬性寫進 history，TickInterp 在 `_process` 插值寫回 property。若 `_physics_process` 或其他 handler 也改同屬性，會跟 TickInterp 打架
+2. **Authority peer 必須 queue_free TickInterp**（只有 `_server_tick` 純 tick-based 的實體例外，如 Animal）。Pattern：
+   ```gdscript
+   if is_multiplayer_authority():  # 或 _is_server()
+       if has_node("TickInterp"):
+           $TickInterp.queue_free()
+   ```
+3. **CharacterBody2D + move_and_slide**：AI 決策放 `NetworkTime.on_tick` (30Hz)，`move_and_slide` + 邊界 clamp 留 `_physics_process` (60Hz)。不要把 move_and_slide 放進 on_tick（它用 physics delta，不配合會變半速）
+4. **Respawn / teleport** 必呼叫 `$TickInterp.teleport()`（如果 node 存在），避免遠端從舊位置滑行
+5. **不要寫 `target_position` 這種 proxy 變數**。直接同步 `position`；TickInterp 和 StateSync 分工處理平滑 + 廣播
+6. **NetworkTime.tickrate 預設 30Hz**，比舊 MP-Sync 20Hz 高 50%。流量 + CPU 多一點，jitter 容忍度也高
+7. **WebSocket on TCP，Netfox `unreliable_ordered` hint 在這裡沒意義**。Netfox 修 rubber-band 靠 history buffer 按 tick 排序，不是靠 unreliable
 
 ## 截圖驗證標準
 - 截圖後必須認真確認畫面內容是否正確，不能只看「有東西在渲染」就說正常
@@ -24,9 +91,9 @@ MMO Lite 即時動作 RPG + 怪獸收集，基於 NinjaAdventure 開源 Godot �
 
 ## 技術棧
 - 引擎：Godot 4.3，GDScript
-- 多人：Godot ENet（MultiplayerSynchronizer + MultiplayerSpawner + @rpc）
+- 多人：**Netfox 1.35.3** StateSync + TickInterpolator（取代內建 MP-Sync）+ MultiplayerSpawner + @rpc，WebSocket 傳輸
 - 素材：Ninja Adventure Asset Pack (CC0 授權)
-- 設計文件：DESIGN_SUPPLEMENT.md（完整規格）
+- 設計文件：DESIGN_SUPPLEMENT.md（完整規格）、NETFOX_NOTES.md（Netfox API 筆記）、SYNC_INVENTORY.md（sync 清單）
 
 ## 目錄結構
 

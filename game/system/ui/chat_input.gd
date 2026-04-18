@@ -14,15 +14,15 @@ func _ready():
 	layer = 20
 	visible = false
 
-	# 半透明黑底背景（畫面底部）
+	# 半透明黑底背景（畫面底部，留適當高度給中文字 + padding）
 	bg = ColorRect.new()
-	bg.color = Color(0, 0, 0, 0.7)
+	bg.color = Color(0, 0, 0, 0.75)
 	bg.anchor_left = 0.0
 	bg.anchor_right = 1.0
 	bg.anchor_top = 1.0
 	bg.anchor_bottom = 1.0
-	bg.offset_top = -24
-	bg.offset_bottom = 0
+	bg.offset_top = -44
+	bg.offset_bottom = -12
 	add_child(bg)
 
 	# 輸入框
@@ -32,11 +32,15 @@ func _ready():
 	line_edit.anchor_right = 1.0
 	line_edit.anchor_top = 1.0
 	line_edit.anchor_bottom = 1.0
-	line_edit.offset_top = -22
-	line_edit.offset_bottom = -2
-	line_edit.offset_left = 4
-	line_edit.offset_right = -4
-	line_edit.add_theme_font_size_override("font_size", 10)
+	line_edit.offset_top = -40
+	line_edit.offset_bottom = -16
+	line_edit.offset_left = 8
+	line_edit.offset_right = -8
+	# 套中文字體（LineEdit 在 CanvasLayer 裡，不會繼承 Control theme）
+	var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+	if cjk_font:
+		line_edit.add_theme_font_override("font", cjk_font)
+	line_edit.add_theme_font_size_override("font_size", 14)
 	add_child(line_edit)
 	line_edit.text_submitted.connect(_on_text_submitted)
 

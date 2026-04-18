@@ -31,10 +31,15 @@ func _ready():
 
 
 func _physics_process(delta):
+	# Only server drives lifetime + collision. Clients are passive — they wait
+	# for _rpc_despawn/_rpc_picked_up. Otherwise client may queue_free first and
+	# then receive the RPC on a freed node → "Node not found" error spam.
+	if !_is_server():
+		return
+
 	lifetime -= delta
 	if lifetime <= 0:
-		# Server 通知所有 client 消失（call_local 包含 server 自己）
-		if _is_server() and multiplayer.has_multiplayer_peer():
+		if multiplayer.has_multiplayer_peer():
 			_rpc_despawn.rpc()
 		else:
 			queue_free()
@@ -43,10 +48,6 @@ func _physics_process(delta):
 	# 拾取延遲
 	if pickup_delay > 0:
 		pickup_delay -= delta
-		return
-
-	# 只有 server 檢查拾取碰撞
-	if !_is_server():
 		return
 
 	for body in get_overlapping_bodies():

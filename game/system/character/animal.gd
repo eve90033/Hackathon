@@ -58,8 +58,18 @@ func _ready():
 	home_position = global_position
 	if multiplayer.has_multiplayer_peer():
 		set_multiplayer_authority(1)
+	# Netfox: explicitly set root to self (at runtime NodePath-to-Node
+	# auto-resolution for @export var root: Node doesn't fire, so we
+	# set it programmatically and re-run process_settings).
+	if has_node("StateSync"):
+		$StateSync.root = self
+		$StateSync.process_settings()
+	if has_node("TickInterp"):
+		$TickInterp.root = self
+		$TickInterp.process_settings()
 	if _is_server():
 		_pick_new_wander()
+		NetworkTime.on_tick.connect(_server_tick)
 
 
 func _pick_new_wander():
@@ -79,35 +89,35 @@ func update_animation():
 	sprite.frame_coords.x = current_image
 
 
+# Server-only: tick-based AI + movement. Must be tick-based (not _process)
+# because TickInterpolator rewrites position in _process for visual interpolation
+# and would fight per-frame position writes.
+func _server_tick(delta: float, _tick: int) -> void:
+	# 漫步 AI（可被外部停用）
+	if !wander_disabled:
+		wander_timer += delta
+		if wander_timer >= wander_duration:
+			wander_timer = 0.0
+			_pick_new_wander()
+		if global_position.distance_to(home_position) > wander_range:
+			move_vector = (home_position - global_position).normalized()
+
+	# 移動執行（始終運行）
+	if move_vector.length():
+		velocity = velocity.move_toward(move_vector*(speed*delta),acceleration*delta)
+	else:
+		velocity = velocity.move_toward(Vector2.ZERO,acceleration*delta)
+	global_position += velocity
+
+
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
 
-	# Server 跑 AI 邏輯，client 只渲染同步的位置
-	if _is_server():
-		# 漫步 AI（可被外部停用）
-		if !wander_disabled:
-			wander_timer += delta
-			if wander_timer >= wander_duration:
-				wander_timer = 0.0
-				_pick_new_wander()
-			if global_position.distance_to(home_position) > wander_range:
-				move_vector = (home_position - global_position).normalized()
-
-		# 移動執行（始終運行）
-		if move_vector.length():
-			if move_vector.x != 0:
-				sprite.flip_h = move_vector.x < 0
-			velocity = velocity.move_toward(move_vector*(speed*delta),acceleration*delta)
-		else:
-			velocity = velocity.move_toward(Vector2.ZERO,acceleration*delta)
-		global_position += velocity
-
-	# Client 端：根據同步的 move_vector 更新面向
-	if !_is_server() and move_vector.length() and move_vector.x != 0:
+	# flip_h + animation 由 synced move_vector 驅動（server + client 都跑）
+	if move_vector.length() and move_vector.x != 0:
 		sprite.flip_h = move_vector.x < 0
 
-	# 動畫（server + client 都跑）
 	current_image += IMAGE_SPEED*delta
 	if move_vector.length():
 		anim = Anim.MOVING

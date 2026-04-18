@@ -2,6 +2,9 @@ extends Character
 class_name NetworkCharacter
 
 
+signal weapon_changed(weapon_key: String)
+
+
 const CHARACTERS_PATH := "res://assets/Actor/Character/"
 const WEAPON_SCENE := preload("res://system/weapon/weapon.tscn")
 const CLUB_RESOURCE := preload("res://content/weapon/club/club.tres")
@@ -35,7 +38,6 @@ var character_key := "Knight":
 			if ResourceLoader.exists(p):
 				sprite.texture = load(p)
 
-@onready var sync: MultiplayerSynchronizer = $MultiplayerSynchronizer
 @onready var name_label: Label = $NameLabel
 
 # CanvasLayer 名字標籤（在螢幕空間渲染，不受 viewport 縮放影響）
@@ -50,7 +52,6 @@ func _enter_tree():
 
 
 func _ready():
-
 	# Apply character skin
 	var sprite_path = CHARACTERS_PATH + character_key + "/SpriteSheet.png"
 	if ResourceLoader.exists(sprite_path):
@@ -69,10 +70,26 @@ func _ready():
 	# Don't get pushed by monsters
 	set_collision_mask_value(2, false)
 
+	# Netfox: explicitly set root (runtime NodePath-to-Node auto-resolution
+	# on @export var root: Node doesn't fire for manually-authored .tscn)
+	if has_node("StateSync"):
+		$StateSync.root = self
+		$StateSync.process_settings()
+	if has_node("TickInterp"):
+		$TickInterp.root = self
+		$TickInterp.process_settings()
+
 	if is_multiplayer_authority():
 		# This is our character: add input + camera
 		var human_controller = HumanController.new()
 		add_child(human_controller)
+		# Free TickInterpolator — our own character runs 60Hz physics via
+		# super._physics_process; TickInterp would clobber position writes.
+		# Remote peers keep TickInterp for smoothing.
+		if has_node("TickInterp"):
+			$TickInterp.queue_free()
+		# Notify server when we teleport so monsters chasing us release target
+		teleported.connect(_on_teleported)
 	elif NetworkManager.is_dedicated_server:
 		# Dedicated server: disable hitbox for remote players
 		# (monster damage to player is handled client-side)
@@ -91,6 +108,9 @@ func _setup_screen_name_label():
 
 	_name_screen_label = Label.new()
 	_name_screen_label.text = player_name
+	var cjk_font = load("res://theme/NotoSansTC-Regular.ttf")
+	if cjk_font:
+		_name_screen_label.add_theme_font_override("font", cjk_font)
 	_name_screen_label.add_theme_font_size_override("font_size", 14)
 	_name_screen_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
 	_name_screen_label.add_theme_color_override("font_shadow_color", Color.BLACK)
@@ -151,8 +171,8 @@ var _remote_prev_state := State.IDLE
 
 func _physics_process(delta: float) -> void:
 	if !is_multiplayer_authority():
-		# Remote player: apply synced animation from state
-		# Detect attack start for weapon visual
+		# Remote player: animation only. Position is synced by StateSync +
+		# smoothed by TickInterp automatically.
 		if state == State.ATTACK and _remote_prev_state != State.ATTACK:
 			sprite.anim = SpriteCharacter.Anim.ATTACK
 			if weapon_node:
@@ -174,11 +194,10 @@ func _physics_process(delta: float) -> void:
 					sprite.direction = move_vector.normalized()
 				else:
 					sprite.anim = SpriteCharacter.Anim.IDLE
-		velocity = velocity.move_toward(move_vector * speed, acceleration * delta)
-		move_and_slide()
 		return
 
-	# Local player: full combat physics
+	# Local player: full combat physics (60Hz). Position is broadcast by
+	# StateSync on NetworkTime.after_tick; no manual target_position write.
 	super._physics_process(delta)
 
 
@@ -256,9 +275,13 @@ func _rpc_hp_update(new_hp: int, new_max: int, is_dead: bool, from_pos: Vector2)
 
 # --- 回血同步（不觸發受傷閃爍）---
 
-@rpc("authority", "reliable")
+# "any_peer" because server (peer=1) is NOT this node's authority (client is).
+# Authority-mode RPC would be rejected by Godot. We still only trust the server at runtime.
+@rpc("any_peer", "reliable")
 func _rpc_heal_sync(new_hp: int, new_max: int):
-	# 只接受 server 的回血同步
+	var sender = multiplayer.get_remote_sender_id()
+	if sender != 1:
+		return  # only trust the server
 	if resource_life:
 		resource_life.max_life = new_max
 		resource_life.life = new_hp
@@ -270,6 +293,7 @@ func change_weapon(weapon_key: String):
 	## 切換武器並同步給所有 client
 	current_weapon_key = weapon_key
 	_apply_weapon(weapon_key)
+	weapon_changed.emit(weapon_key)
 	if multiplayer.has_multiplayer_peer():
 		_rpc_weapon_changed.rpc(weapon_key)
 
@@ -282,6 +306,30 @@ func _rpc_weapon_changed(weapon_key: String):
 		return
 	current_weapon_key = weapon_key
 	_apply_weapon(weapon_key)
+
+
+# --- Teleport: release aggroed monsters ---
+
+## Authority-side: fires when Character.teleport() completes (via `teleported`
+## signal from base class). Notify server so it can reset monsters/bosses
+## that were chasing us.
+func _on_teleported() -> void:
+	if !multiplayer.has_multiplayer_peer():
+		return
+	_rpc_release_aggro.rpc_id(1)
+
+
+@rpc("any_peer", "reliable")
+func _rpc_release_aggro() -> void:
+	if !multiplayer.is_server():
+		return
+	# Reset any monster/boss that's targeting us so they walk home naturally
+	# (existing IDLE AI + aggro cooldown take over)
+	for m in get_tree().get_nodes_in_group("monster"):
+		if m.get("target") != self:
+			continue
+		if m.has_method("release_target_and_cooldown"):
+			m.release_target_and_cooldown()
 
 
 func _apply_weapon(weapon_key: String):
@@ -364,6 +412,9 @@ func _rpc_death_fx():
 func _rpc_respawn_fx(pos: Vector2):
 	# 其他 client 看到重生效果：移動到重生點 + 放大出現
 	global_position = pos
+	# TickInterp is only present on remote peers; snap so we don't slide from death spot
+	if has_node("TickInterp"):
+		$TickInterp.teleport()
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 0.5
 	sprite.scale = Vector2(0.1, 0.1)
@@ -384,8 +435,30 @@ func add_xp(amount: int):
 		_rpc_level_sync.rpc(level)
 
 
+## Server-only. Apply saved state to this character AFTER _ready defaults have run,
+## then broadcast to all clients so they match. Called via call_deferred from
+## world._spawn_player_func when a peer has save data.
+func _apply_server_restore(save: Dictionary) -> void:
+	if !multiplayer.is_server():
+		return
+	if save.has("level") and save["level"] > 1:
+		var lvl = int(save["level"])
+		level = lvl
+		attack_damage = ATK_PER_LEVEL[lvl - 1]
+		if resource_life:
+			resource_life.max_life = HP_PER_LEVEL[lvl - 1]
+			resource_life.life = resource_life.max_life
+		# Tell every peer (including this player's own client) — overrides the
+		# client's local _load_player_data if it ran, or primes it if it didn't.
+		if multiplayer.has_multiplayer_peer():
+			_rpc_level_sync.rpc(lvl, false)  # no FX
+	if save.has("xp"):
+		xp = int(save["xp"])
+	# Weapon restore is handled client-side (owning peer is weapon authority).
+
+
 @rpc("any_peer", "reliable")
-func _rpc_level_sync(new_level: int):
+func _rpc_level_sync(new_level: int, show_fx: bool = true):
 	# 同步等級 + HP上限 + ATK（包含自己的 client）
 	if new_level > level:
 		level = new_level
@@ -393,7 +466,8 @@ func _rpc_level_sync(new_level: int):
 		if resource_life:
 			resource_life.max_life = HP_PER_LEVEL[level - 1]
 			resource_life.life = resource_life.max_life  # 滿血
-		_show_levelup_fx()
+		if show_fx:
+			_show_levelup_fx()
 
 
 # --- 聊天同步 ---

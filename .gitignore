@@ -2,6 +2,41 @@
 game/.godot/
 game/*.tmp
 game/screenshot_*.png
+game/build/
+
+# Dev screenshots (root)
+screenshot_*.png
+
+# Slide / pitch deck build artifacts (local only)
+*.pptx
+slide_assets/
+build_slides.py
+build_expanded_slides.py
+fill_template.py
+inspect_template.py
+read_template.py
+make_monster_grid.py
+make_qr.py
+
+# Demo presentation (local only, not in git)
+DEMO.md
+DEMO_CONTENT.md
+DEMO_SCRIPT.md
+_demo_qr.png
+_demo_preview/
+_demo_sprites/
+_pptx_media/
+_pptx_content.txt
+_build_demo_pptx.py
+
+# Office lock files
+.~lock.*#
+
+# Windows crash dumps
+*.stackdump
+
+# Claude Code local settings
+.claude/
 
 # OS
 .DS_Store
@@ -20,3 +55,4 @@ node_modules/
 # IDE
 .vscode/
 *.swp
+.gstack/
