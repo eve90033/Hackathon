@@ -9,6 +9,7 @@
 - 同一個方法失敗 2 次就換路線，不要盲目重試
 - **Subagent 或自己寫完程式碼後，必須實際啟動遊戲抓 stdout，grep `SCRIPT ERROR` 確認零錯誤才算完成。`--editor --quit --headless` 只做 import，不能捕捉所有編譯錯誤（例如 class_name 解析失敗）。**
 - 新增 class_name 的 .gd 檔案後，其他腳本不要直接用類型名引用，改用 `preload()` + `set_script()` 避免 import 順序問題
+- **寫 report / 整理文件 / 回報進度前，必須先跑 `git log`、`git status`、讀相關檔案**。每個 claim 附證據（commit hash / file:line）。memory 可能過時，只能當參考不能當 primary source。無證據就明說「我不確定」，不要憑記憶猜。
 
 ## Sync / 多人同步變更規則（避免改一個壞一個）
 
