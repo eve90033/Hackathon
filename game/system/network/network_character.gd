@@ -38,7 +38,6 @@ var character_key := "Knight":
 			if ResourceLoader.exists(p):
 				sprite.texture = load(p)
 
-@onready var sync: MultiplayerSynchronizer = $MultiplayerSynchronizer
 @onready var name_label: Label = $NameLabel
 
 # CanvasLayer 名字標籤（在螢幕空間渲染，不受 viewport 縮放影響）
@@ -53,9 +52,6 @@ func _enter_tree():
 
 
 func _ready():
-	# Init snapshot target so remote peers don't lerp from (0,0)
-	target_position = global_position
-
 	# Apply character skin
 	var sprite_path = CHARACTERS_PATH + character_key + "/SpriteSheet.png"
 	if ResourceLoader.exists(sprite_path):
@@ -78,6 +74,11 @@ func _ready():
 		# This is our character: add input + camera
 		var human_controller = HumanController.new()
 		add_child(human_controller)
+		# Free TickInterpolator — our own character runs 60Hz physics via
+		# super._physics_process; TickInterp would clobber position writes.
+		# Remote peers keep TickInterp for smoothing.
+		if has_node("TickInterp"):
+			$TickInterp.queue_free()
 	elif NetworkManager.is_dedicated_server:
 		# Dedicated server: disable hitbox for remote players
 		# (monster damage to player is handled client-side)
@@ -159,9 +160,8 @@ var _remote_prev_state := State.IDLE
 
 func _physics_process(delta: float) -> void:
 	if !is_multiplayer_authority():
-		# Remote player: drive animation from synced state + smoothly interpolate
-		# visible position toward authority's target_position. No client physics —
-		# that was fighting the position packets and causing the freeze/jitter.
+		# Remote player: animation only. Position is synced by StateSync +
+		# smoothed by TickInterp automatically.
 		if state == State.ATTACK and _remote_prev_state != State.ATTACK:
 			sprite.anim = SpriteCharacter.Anim.ATTACK
 			if weapon_node:
@@ -183,19 +183,11 @@ func _physics_process(delta: float) -> void:
 					sprite.direction = move_vector.normalized()
 				else:
 					sprite.anim = SpriteCharacter.Anim.IDLE
-
-		# Snapshot interpolation toward authority's target
-		var to_target = target_position - global_position
-		if to_target.length() > 256.0:
-			# Teleport / respawn — snap, don't slide across the map
-			global_position = target_position
-		else:
-			global_position = global_position.lerp(target_position, clamp(delta * 15.0, 0.0, 1.0))
 		return
 
-	# Local player: full combat physics, then publish snapshot for others
+	# Local player: full combat physics (60Hz). Position is broadcast by
+	# StateSync on NetworkTime.after_tick; no manual target_position write.
 	super._physics_process(delta)
-	target_position = global_position
 
 
 func _on_weapon_hit(_area):
@@ -305,11 +297,6 @@ func _rpc_weapon_changed(weapon_key: String):
 	_apply_weapon(weapon_key)
 
 
-# Snapshot interpolation: authority writes target_position, remote peers lerp to it.
-# Replaces direct position sync so remote rendering doesn't fight client physics.
-var target_position := Vector2.ZERO
-
-
 func _apply_weapon(weapon_key: String):
 	var path = WEAPON_PATHS.get(weapon_key, "")
 	if path == "" or !ResourceLoader.exists(path):
@@ -390,6 +377,9 @@ func _rpc_death_fx():
 func _rpc_respawn_fx(pos: Vector2):
 	# 其他 client 看到重生效果：移動到重生點 + 放大出現
 	global_position = pos
+	# TickInterp is only present on remote peers; snap so we don't slide from death spot
+	if has_node("TickInterp"):
+		$TickInterp.teleport()
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 0.5
 	sprite.scale = Vector2(0.1, 0.1)
