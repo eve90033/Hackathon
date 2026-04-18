@@ -29,8 +29,8 @@ var move_vector := Vector2.ZERO:
 		if move_vector.length():
 			sprite.direction = move_vector.normalized()
 
-# Snapshot interpolation target (server writes, client lerps visual toward it).
-var target_position := Vector2.ZERO
+# Position synced directly via Netfox StateSync + TickInterp (see .tscn).
+# Authority writes global_position via move_and_slide; remote peers see TickInterp smoothing.
 
 var boss_state := BossState.IDLE
 var hp: int
@@ -89,13 +89,20 @@ func _ready():
 
 	hp = max_hp
 	home_position = global_position
-	target_position = global_position
 	add_to_group("boss")
 	add_to_group("monster")
 
 	# Server 是所有 Boss 的權威
 	if _is_multiplayer():
 		set_multiplayer_authority(1)
+
+	# Netfox: server-side tick-based AI (30Hz), physics stays 60Hz.
+	# Authority peer frees TickInterp to prevent 60Hz physics from being
+	# clobbered by before/after_tick_loop state rewinds.
+	if _is_server():
+		NetworkTime.on_tick.connect(_server_tick)
+		if has_node("TickInterp"):
+			$TickInterp.queue_free()
 
 	# 碰撞設定
 	set_collision_mask_value(2, false)
@@ -181,22 +188,28 @@ func _physics_process(delta: float):
 	if Engine.is_editor_hint():
 		return
 
-	# Client 端：僅渲染同步狀態
+	# Client 端：僅渲染同步狀態（position 由 TickInterp 平滑）
 	if _is_multiplayer() and !_is_server():
 		_process_client(delta)
 		return
 
-	# Server / 單人：完整 AI 邏輯
-	# 閃爍衰減
+	# Server / 單人：僅視覺衰減計時器 + move_and_slide（60Hz）
+	# AI 決策 + velocity 更新在 _server_tick（30Hz）
 	if flash_timer > 0:
 		flash_timer -= delta
 		if flash_timer <= 0:
 			sprite.modulate = Color.WHITE
 
-	# 擊退衰減
 	if push_velocity.length() > 0:
 		push_velocity = push_velocity.move_toward(Vector2.ZERO, 400 * delta)
 
+	move_and_slide()
+	_prev_boss_state = boss_state
+
+
+# Server-only tick-based AI (30Hz). State transitions + velocity updates here;
+# physics movement (move_and_slide) stays in _physics_process at 60Hz.
+func _server_tick(delta: float, _tick: int) -> void:
 	match boss_state:
 		BossState.IDLE:
 			_process_idle(delta)
@@ -210,11 +223,6 @@ func _physics_process(delta: float):
 			_process_stunned(delta)
 		BossState.DEAD:
 			velocity = Vector2.ZERO
-
-	move_and_slide()
-	# Publish snapshot target for client interpolation
-	target_position = global_position
-	_prev_boss_state = boss_state
 
 
 # === Client 端渲染 ===
@@ -265,13 +273,8 @@ func _process_client(delta: float):
 			sprite.modulate = Color.WHITE
 
 	_prev_boss_state = boss_state
-	# Snapshot interpolation toward server's target_position (replaces move_and_slide
-	# that was fighting position-sync packets). Snap if teleport-sized delta.
-	var to_target = target_position - global_position
-	if to_target.length() > 256.0:
-		global_position = target_position
-	else:
-		global_position = global_position.lerp(target_position, clamp(delta * 15.0, 0.0, 1.0))
+	# Position interpolation handled by TickInterpolator on remote peer;
+	# no manual lerp needed.
 	_update_hp_bar()
 
 
@@ -666,7 +669,6 @@ func _respawn():
 	attack_count = 0
 	intro_played = false
 	global_position = home_position
-	target_position = home_position  # keep client snapshot in sync immediately
 	visible = true
 	set_deferred("collision_layer", 2)
 	set_deferred("collision_mask", 1)
@@ -686,7 +688,9 @@ func _respawn():
 @rpc("authority", "reliable")
 func _rpc_respawn_fx(pos: Vector2):
 	global_position = pos
-	target_position = pos
+	# Tell TickInterp not to slide from death spot to home
+	if has_node("TickInterp"):
+		$TickInterp.teleport()
 	visible = true
 	sprite.modulate = Color.WHITE
 	sprite.modulate.a = 1.0
